@@ -1,7 +1,7 @@
 #THIS FILE IS AUTO GENERATED FROM THE TEMPLATE! DO NOT CHANGE!
 set(CMAKE_SYSTEM_NAME Generic)
 set(CMAKE_SYSTEM_VERSION 1)
-cmake_minimum_required(VERSION 4.0)
+cmake_minimum_required(VERSION 3.28.1)
 
 # specify cross-compilers and tools
 set(CMAKE_C_COMPILER arm-none-eabi-gcc)
@@ -48,6 +48,13 @@ else ()
     message(STATUS "Minimal optimization, debug info included")
     add_compile_options(-Og -g)
 endif ()
+
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE "Debug")
+endif()
+
+project(dm02_test)
+message("Build type: " ${CMAKE_BUILD_TYPE})
 
 include_directories(Core/Inc Drivers/STM32H7xx_HAL_Driver/Inc Drivers/STM32H7xx_HAL_Driver/Inc/Legacy Drivers/CMSIS/Device/ST/STM32H7xx/Include Drivers/CMSIS/Include Middlewares/ST/ARM/DSP/Inc USB_DEVICE/App USB_DEVICE/Target Middlewares/ST/STM32_USB_Device_Library/Core/Inc Middlewares/ST/STM32_USB_Device_Library/Class/CDC/Inc)
 
