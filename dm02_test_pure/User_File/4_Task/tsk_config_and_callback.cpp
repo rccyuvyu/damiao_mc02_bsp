@@ -22,6 +22,7 @@
 #include "2_Device/BSP/Buzzer/bsp_buzzer.h"
 #include "2_Device/BSP/Power/bsp_power.h"
 #include "2_Device/BSP/Key/bsp_key.h"
+#include "2_Device/BSP/LCD/bsp_lcd.h"
 #include "1_Middleware/Algorithm/Filter/Kalman/alg_filter_kalman.h"
 #include "1_Middleware/Algorithm/Matrix/alg_matrix.h"
 #include "1_Middleware/Driver/WDG/drv_wdg.h"
@@ -37,6 +38,32 @@
 bool init_finished = false;
 
 /* Private function declarations ---------------------------------------------*/
+
+extern SPI_HandleTypeDef hspi1;
+
+static void LCD_Demo_Init()
+{
+    Struct_BSP_LCD_Config lcd_config;
+
+    // 当前CubeMX未设置用户标签, 这里直接按实际引脚绑定:
+    // CS = PE15, BL = PB10, RST = PB11, DC = PD10, SPI = SPI1
+    lcd_config.SPI_Handler = &hspi1;
+    lcd_config.CS_GPIOx = GPIOE;
+    lcd_config.CS_GPIO_Pin = GPIO_PIN_15;
+    lcd_config.DC_GPIOx = GPIOD;
+    lcd_config.DC_GPIO_Pin = GPIO_PIN_10;
+    lcd_config.RST_GPIOx = GPIOB;
+    lcd_config.RST_GPIO_Pin = GPIO_PIN_11;
+    lcd_config.BL_GPIOx = GPIOB;
+    lcd_config.BL_GPIO_Pin = GPIO_PIN_10;
+    lcd_config.Width = 240;
+    lcd_config.Height = 240;
+    lcd_config.X_Offset = 0;
+    lcd_config.Y_Offset = 80;
+    lcd_config.Rotation = BSP_LCD_Rotation_0;
+
+    BSP_LCD.Init(lcd_config);
+}
 
 /* Function prototypes -------------------------------------------------------*/
 
@@ -54,8 +81,13 @@ void Task3600s_Callback()
  *
  */
 void Task1s_Callback()
-{
+{   
 
+    static uint32_t count = 0;
+    char lcd_buf[32];
+    count++;
+    snprintf(lcd_buf, sizeof(lcd_buf), "Count: %lu", count);
+    BSP_LCD.Draw_String(8, 20, lcd_buf, BSP_LCD_COLOR_GREEN, BSP_LCD_COLOR_BLACK, 2);
 }
 
 /**
@@ -92,6 +124,8 @@ void Task10us_Callback()
 void Task_Init()
 {
     SYS_Timestamp.Init(&htim5);
+
+    LCD_Demo_Init();
 
     // 定时器中断初始化
     HAL_TIM_Base_Start_IT(&htim4);

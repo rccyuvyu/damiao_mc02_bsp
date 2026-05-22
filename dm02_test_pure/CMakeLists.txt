@@ -77,6 +77,10 @@ file(
 
 )
 
+# CubeMX regenerated `usbd_cdc_if.c` may coexist with the C++ port.
+# Keep the `.cpp` implementation only to avoid duplicate USB CDC symbols.
+list(FILTER SOURCES EXCLUDE REGEX ".*USB_DEVICE/App/usbd_cdc_if\\.c$")
+
 set(LINKER_SCRIPT ${CMAKE_SOURCE_DIR}/STM32H723VGTX_FLASH.ld)
 
 add_link_options(-Wl,-gc-sections,--print-memory-usage,-Map=${PROJECT_BINARY_DIR}/${PROJECT_NAME}.map)
