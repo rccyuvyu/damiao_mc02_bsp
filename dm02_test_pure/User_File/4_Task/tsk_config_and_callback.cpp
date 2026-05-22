@@ -23,6 +23,8 @@
 #include "2_Device/BSP/Power/bsp_power.h"
 #include "2_Device/BSP/Key/bsp_key.h"
 #include "2_Device/BSP/LCD/bsp_lcd.h"
+#include "2_Device/BSP/LCD/bsp_lcd_key.h"
+#include "1_Middleware/Driver/ADC/drv_adc.h"
 #include "1_Middleware/Algorithm/Filter/Kalman/alg_filter_kalman.h"
 #include "1_Middleware/Algorithm/Matrix/alg_matrix.h"
 #include "1_Middleware/Driver/WDG/drv_wdg.h"
@@ -97,6 +99,7 @@ void Task1s_Callback()
 void Task1ms_Callback()
 {
     TIM_1ms_IWDG_PeriodElapsedCallback();
+    BSP_LCD_Key.TIM_1ms_Process_PeriodElapsedCallback();
 }
 
 /**
@@ -126,6 +129,10 @@ void Task_Init()
     SYS_Timestamp.Init(&htim5);
 
     LCD_Demo_Init();
+
+    // ADC + LCD按键初始化
+    ADC_Init(&hadc1, 2);
+    BSP_LCD_Key.Init(&ADC1_Manage_Object, 1, 4095);
 
     // 定时器中断初始化
     HAL_TIM_Base_Start_IT(&htim4);
