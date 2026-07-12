@@ -10,7 +10,7 @@
 /media/rccyuvyu/Data/share/c/c/Microcomputer/STM32/RM/damiao_mc02_bsp/dm02_mouse_test/Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_flash_ex.c:1701:13:FLASH_OB_GetPCROP	4	static
 /media/rccyuvyu/Data/share/c/c/Microcomputer/STM32/RM/damiao_mc02_bsp/dm02_mouse_test/Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_flash_ex.c:1737:13:FLASH_OB_BOR_LevelConfig	0	static
 /media/rccyuvyu/Data/share/c/c/Microcomputer/STM32/RM/damiao_mc02_bsp/dm02_mouse_test/Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_flash_ex.c:1754:17:FLASH_OB_GetBOR	0	static
-/media/rccyuvyu/Data/share/c/c/Microcomputer/STM32/RM/damiao_mc02_bsp/dm02_mouse_test/Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_flash_ex.c:1769:13:FLASH_OB_BootAddConfig	8	static
+/media/rccyuvyu/Data/share/c/c/Microcomputer/STM32/RM/damiao_mc02_bsp/dm02_mouse_test/Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_flash_ex.c:1769:13:FLASH_OB_BootAddConfig	4	static
 /media/rccyuvyu/Data/share/c/c/Microcomputer/STM32/RM/damiao_mc02_bsp/dm02_mouse_test/Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_flash_ex.c:1807:13:FLASH_OB_GetBootAdd	0	static
 /media/rccyuvyu/Data/share/c/c/Microcomputer/STM32/RM/damiao_mc02_bsp/dm02_mouse_test/Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_flash_ex.c:1891:13:FLASH_OB_SecureAreaConfig	0	static
 /media/rccyuvyu/Data/share/c/c/Microcomputer/STM32/RM/damiao_mc02_bsp/dm02_mouse_test/Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_flash_ex.c:1933:13:FLASH_OB_GetSecureArea	4	static

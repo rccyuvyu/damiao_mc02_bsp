@@ -105,21 +105,69 @@ void CAN_Init(FDCAN_HandleTypeDef *hfdcan, CAN_Callback Callback_Function)
     {
         CAN1_Manage_Object.CAN_Handler = hfdcan;
         CAN1_Manage_Object.Callback_Function = Callback_Function;
+        CAN1_Manage_Object.StdID_Callback_Entry_Num = 0;
     }
     else if (hfdcan->Instance == FDCAN2)
     {
         CAN2_Manage_Object.CAN_Handler = hfdcan;
         CAN2_Manage_Object.Callback_Function = Callback_Function;
+        CAN2_Manage_Object.StdID_Callback_Entry_Num = 0;
     }
     else if (hfdcan->Instance == FDCAN3)
     {
         CAN3_Manage_Object.CAN_Handler = hfdcan;
         CAN3_Manage_Object.Callback_Function = Callback_Function;
+        CAN3_Manage_Object.StdID_Callback_Entry_Num = 0;
     }
 
     can_filter_mask_config(hfdcan);
 
     HAL_FDCAN_Start(hfdcan);
+}
+
+uint8_t CAN_Register_StdID_Callback(FDCAN_HandleTypeDef *hfdcan, uint16_t StdID, CAN_StdID_Callback Callback_Function, void *User_Data)
+{
+    Struct_CAN_Manage_Object *can_manage_object = nullptr;
+
+    if (hfdcan->Instance == FDCAN1)
+    {
+        can_manage_object = &CAN1_Manage_Object;
+    }
+    else if (hfdcan->Instance == FDCAN2)
+    {
+        can_manage_object = &CAN2_Manage_Object;
+    }
+    else if (hfdcan->Instance == FDCAN3)
+    {
+        can_manage_object = &CAN3_Manage_Object;
+    }
+
+    if (can_manage_object == nullptr || Callback_Function == nullptr)
+    {
+        return (HAL_ERROR);
+    }
+
+    for (uint8_t i = 0; i < can_manage_object->StdID_Callback_Entry_Num; i++)
+    {
+        if (can_manage_object->StdID_Callback_Entry[i].StdID == StdID)
+        {
+            can_manage_object->StdID_Callback_Entry[i].Callback_Function = Callback_Function;
+            can_manage_object->StdID_Callback_Entry[i].User_Data = User_Data;
+            return (HAL_OK);
+        }
+    }
+
+    if (can_manage_object->StdID_Callback_Entry_Num >= Struct_CAN_Manage_Object::STDID_CALLBACK_ENTRY_NUM)
+    {
+        return (HAL_ERROR);
+    }
+
+    can_manage_object->StdID_Callback_Entry[can_manage_object->StdID_Callback_Entry_Num].StdID = StdID;
+    can_manage_object->StdID_Callback_Entry[can_manage_object->StdID_Callback_Entry_Num].Callback_Function = Callback_Function;
+    can_manage_object->StdID_Callback_Entry[can_manage_object->StdID_Callback_Entry_Num].User_Data = User_Data;
+    can_manage_object->StdID_Callback_Entry_Num++;
+
+    return (HAL_OK);
 }
 
 /**
@@ -184,6 +232,23 @@ void TIM_1ms_CAN_PeriodElapsedCallback()
  */
 void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
 {
+    auto dispatch_std_id_callback = [](Struct_CAN_Manage_Object &can_manage_object)
+    {
+        if (can_manage_object.Rx_Header.IdType != FDCAN_STANDARD_ID)
+        {
+            return;
+        }
+
+        for (uint8_t i = 0; i < can_manage_object.StdID_Callback_Entry_Num; i++)
+        {
+            Struct_CAN_StdID_Callback_Entry &entry = can_manage_object.StdID_Callback_Entry[i];
+            if (entry.StdID == can_manage_object.Rx_Header.Identifier && entry.Callback_Function != nullptr)
+            {
+                entry.Callback_Function(can_manage_object.Rx_Header, can_manage_object.Rx_Buffer, entry.User_Data);
+            }
+        }
+    };
+
     // 判断程序初始化完成
     if (!init_finished)
     {
@@ -223,6 +288,8 @@ void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
             {
                 CAN1_Manage_Object.Callback_Function(CAN1_Manage_Object.Rx_Header, CAN1_Manage_Object.Rx_Buffer);
             }
+
+            dispatch_std_id_callback(CAN1_Manage_Object);
         }
     }
     else if (hfdcan->Instance == FDCAN2)
@@ -235,6 +302,8 @@ void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
             {
                 CAN2_Manage_Object.Callback_Function(CAN2_Manage_Object.Rx_Header, CAN2_Manage_Object.Rx_Buffer);
             }
+
+            dispatch_std_id_callback(CAN2_Manage_Object);
         }
     }
     else if (hfdcan->Instance == FDCAN3)
@@ -247,6 +316,8 @@ void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
             {
                 CAN3_Manage_Object.Callback_Function(CAN3_Manage_Object.Rx_Header, CAN3_Manage_Object.Rx_Buffer);
             }
+
+            dispatch_std_id_callback(CAN3_Manage_Object);
         }
     }
 }

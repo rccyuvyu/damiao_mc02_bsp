@@ -15,6 +15,7 @@
 #include "tsk_config_and_callback.h"
 
 #include "2_Device/Motor/Motor_DJI/dvc_motor_dji.h"
+#include "2_Device/Motor/Motor_JC/dvc_motor_jc.h"
 #include "2_Device/BSP/BMI088/bsp_bmi088.h"
 #include "2_Device/Plotter/Vofa/dvc_vofa.h"
 #include "2_Device/BSP/W25Q64JV/bsp_w25q64jv.h"
@@ -29,6 +30,7 @@
 #include "1_Middleware/Algorithm/Matrix/alg_matrix.h"
 #include "1_Middleware/Driver/WDG/drv_wdg.h"
 #include "1_Middleware/System/Timestamp/sys_timestamp.h"
+#include "fdcan.h"
 
 /* Private macros ------------------------------------------------------------*/
 
@@ -38,6 +40,13 @@
 
 // 全局初始化完成标志位
 bool init_finished = false;
+
+static Class_Motor_JC Motor_JC_1;
+static Class_PID PID_Motor_JC_Position;
+static Class_PID PID_Motor_JC_Speed;
+static constexpr float MOTOR_JC_HOLD_ANGLE_DEG = 0.0f;
+static constexpr float MOTOR_JC_SPEED_LIMIT_RPM = 120.0f;
+static constexpr float MOTOR_JC_TORQUE_LIMIT_NM = 1.5f;
 
 /* Private function declarations ---------------------------------------------*/
 
@@ -67,6 +76,26 @@ static void LCD_Demo_Init()
     BSP_LCD.Init(lcd_config);
 }
 
+static void Motor_JC_Hold_Init()
+{
+    CAN_Init(&hfdcan1, nullptr);
+
+    Motor_JC_1.Init(&hfdcan1, 1);
+
+    PID_Motor_JC_Position.Init(1.5f, 0.0f, 0.0f, 0.0f, 0.0f, MOTOR_JC_SPEED_LIMIT_RPM, 0.001f, 0.2f);
+    PID_Motor_JC_Position.Set_Target(MOTOR_JC_HOLD_ANGLE_DEG);
+    PID_Motor_JC_Position.Set_Integral_Error(0.0f);
+    PID_Motor_JC_Speed.Init(0.02f, 0.001f, 0.0f, 0.0f, 0.8f, MOTOR_JC_TORQUE_LIMIT_NM, 0.001f, 1.0f);
+    PID_Motor_JC_Speed.Set_Target(0.0f);
+    PID_Motor_JC_Speed.Set_Integral_Error(0.0f);
+
+    Motor_JC_1.Enter_Close_Loop();
+    Motor_JC_1.Set_Mode(Motor_JC_Mode_TORQUE);
+    Motor_JC_1.Set_Torque_Nm(0.0f);
+    Motor_JC_1.Read_Position();
+    Motor_JC_1.Read_Speed();
+}
+
 /* Function prototypes -------------------------------------------------------*/
 
 /**
@@ -87,9 +116,16 @@ void Task1s_Callback()
 
     static uint32_t count = 0;
     char lcd_buf[32];
+    const Struct_Motor_JC_Feedback &motor_feedback = Motor_JC_1.Get_Feedback();
     count++;
     snprintf(lcd_buf, sizeof(lcd_buf), "Count: %lu", count);
     BSP_LCD.Draw_String(8, 20, lcd_buf, BSP_LCD_COLOR_GREEN, BSP_LCD_COLOR_BLACK, 2);
+    snprintf(lcd_buf, sizeof(lcd_buf), "JC Pos:%6.1f", motor_feedback.Position_Deg);
+    BSP_LCD.Draw_String(8, 44, lcd_buf, BSP_LCD_COLOR_GREEN, BSP_LCD_COLOR_BLACK, 2);
+    snprintf(lcd_buf, sizeof(lcd_buf), "JC Spd:%6.1f", motor_feedback.Speed_Rpm);
+    BSP_LCD.Draw_String(8, 68, lcd_buf, BSP_LCD_COLOR_GREEN, BSP_LCD_COLOR_BLACK, 2);
+    snprintf(lcd_buf, sizeof(lcd_buf), "JC Tq :%6.2f", motor_feedback.Torque_Nm);
+    BSP_LCD.Draw_String(8, 92, lcd_buf, BSP_LCD_COLOR_GREEN, BSP_LCD_COLOR_BLACK, 2);
 }
 
 /**
@@ -98,8 +134,38 @@ void Task1s_Callback()
  */
 void Task1ms_Callback()
 {
+    static uint8_t motor_jc_feedback_divider = 0;
+    static uint8_t motor_jc_alive_divider = 0;
+
     TIM_1ms_IWDG_PeriodElapsedCallback();
     BSP_LCD_Key.TIM_1ms_Process_PeriodElapsedCallback();
+
+    PID_Motor_JC_Position.Set_Target(MOTOR_JC_HOLD_ANGLE_DEG);
+    PID_Motor_JC_Position.Set_Now(Motor_JC_1.Get_Feedback().Position_Deg);
+    PID_Motor_JC_Position.TIM_Calculate_PeriodElapsedCallback();
+
+    PID_Motor_JC_Speed.Set_Target(PID_Motor_JC_Position.Get_Out());
+    PID_Motor_JC_Speed.Set_Now(Motor_JC_1.Get_Feedback().Speed_Rpm);
+    PID_Motor_JC_Speed.TIM_Calculate_PeriodElapsedCallback();
+
+    Motor_JC_1.Set_Torque_Nm(PID_Motor_JC_Speed.Get_Out());
+
+    motor_jc_feedback_divider++;
+    if (motor_jc_feedback_divider >= 10)
+    {
+        motor_jc_feedback_divider = 0;
+        Motor_JC_1.Read_Position();
+        Motor_JC_1.Read_Speed();
+    }
+
+    motor_jc_alive_divider++;
+    if (motor_jc_alive_divider >= 100)
+    {
+        motor_jc_alive_divider = 0;
+        Motor_JC_1.TIM_100ms_Alive_PeriodElapsedCallback();
+        Motor_JC_1.Enter_Close_Loop();
+        Motor_JC_1.Set_Mode(Motor_JC_Mode_TORQUE);
+    }
 }
 
 /**
@@ -133,6 +199,8 @@ void Task_Init()
     // ADC + LCD按键初始化
     ADC_Init(&hadc1, 2);
     BSP_LCD_Key.Init(&ADC1_Manage_Object, 1, 4095);
+
+    Motor_JC_Hold_Init();
 
     // 定时器中断初始化
     HAL_TIM_Base_Start_IT(&htim4);

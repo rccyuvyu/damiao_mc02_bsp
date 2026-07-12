@@ -7,6 +7,7 @@
         "editor.formatOnSave": false,
     },
     "cortex-debug.variableUseNaturalFormat": true,
+    "cortex-debug.gdbPath": "/usr/bin/arm-none-eabi-gdb",
     "cmake.configureOnOpen": true,
     "cmake.options.advanced": {
         "configurePreset": {

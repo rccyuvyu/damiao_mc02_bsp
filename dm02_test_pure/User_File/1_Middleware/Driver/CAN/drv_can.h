@@ -34,6 +34,14 @@
  *
  */
 typedef void (*CAN_Callback)(FDCAN_RxHeaderTypeDef &Header, uint8_t *Buffer);
+typedef void (*CAN_StdID_Callback)(FDCAN_RxHeaderTypeDef &Header, uint8_t *Buffer, void *User_Data);
+
+struct Struct_CAN_StdID_Callback_Entry
+{
+    uint16_t StdID;
+    CAN_StdID_Callback Callback_Function;
+    void *User_Data;
+};
 
 /**
  * @brief CAN通信处理结构体
@@ -41,6 +49,8 @@ typedef void (*CAN_Callback)(FDCAN_RxHeaderTypeDef &Header, uint8_t *Buffer);
  */
 struct Struct_CAN_Manage_Object
 {
+    static constexpr uint8_t STDID_CALLBACK_ENTRY_NUM = 16;
+
     FDCAN_HandleTypeDef *CAN_Handler;
     CAN_Callback Callback_Function;
 
@@ -50,6 +60,10 @@ struct Struct_CAN_Manage_Object
 
     // 接收时间戳
     uint64_t Rx_Timestamp;
+
+    // 按标准帧ID分发的回调
+    uint8_t StdID_Callback_Entry_Num;
+    Struct_CAN_StdID_Callback_Entry StdID_Callback_Entry[STDID_CALLBACK_ENTRY_NUM];
 };
 
 /* Exported variables ---------------------------------------------------------*/
@@ -89,6 +103,8 @@ extern uint8_t CAN_Supercap_Tx_Data[];
 /* Exported function declarations ---------------------------------------------*/
 
 void CAN_Init(FDCAN_HandleTypeDef *hfdcan, CAN_Callback Callback_Function);
+
+uint8_t CAN_Register_StdID_Callback(FDCAN_HandleTypeDef *hfdcan, uint16_t StdID, CAN_StdID_Callback Callback_Function, void *User_Data);
 
 uint8_t CAN_Transmit_Data(FDCAN_HandleTypeDef *hfdcan, uint16_t ID, uint8_t *Data, uint16_t Length);
 

@@ -6,7 +6,7 @@
             "cwd": "${workspaceFolder}",
             "executable": "${command:cmake.getLaunchTargetPath}",
             "request": "launch",
-            //"request": "attac",
+            //"request": "attach",
             "type": "cortex-debug",
             "servertype": "openocd",
             "configFiles": [

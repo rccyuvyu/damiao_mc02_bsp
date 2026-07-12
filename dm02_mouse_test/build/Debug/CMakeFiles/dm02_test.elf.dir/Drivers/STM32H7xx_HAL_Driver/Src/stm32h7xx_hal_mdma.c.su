@@ -1,4 +1,4 @@
-/media/rccyuvyu/Data/share/c/c/Microcomputer/STM32/RM/damiao_mc02_bsp/dm02_mouse_test/Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_mdma.c:1760:13:MDMA_SetConfig	12	static
+/media/rccyuvyu/Data/share/c/c/Microcomputer/STM32/RM/damiao_mc02_bsp/dm02_mouse_test/Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_mdma.c:1760:13:MDMA_SetConfig	8	static
 /media/rccyuvyu/Data/share/c/c/Microcomputer/STM32/RM/damiao_mc02_bsp/dm02_mouse_test/Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_mdma.c:1814:13:MDMA_Init	0	static
 /media/rccyuvyu/Data/share/c/c/Microcomputer/STM32/RM/damiao_mc02_bsp/dm02_mouse_test/Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_mdma.c:218:19:HAL_MDMA_Init	16	static
 /media/rccyuvyu/Data/share/c/c/Microcomputer/STM32/RM/damiao_mc02_bsp/dm02_mouse_test/Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_mdma.c:294:19:HAL_MDMA_DeInit	0	static
