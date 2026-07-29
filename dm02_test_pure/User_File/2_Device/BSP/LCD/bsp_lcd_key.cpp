@@ -124,29 +124,33 @@ void Class_LCD_Key::TIM_1ms_Process_PeriodElapsedCallback()
  */
 Enum_BSP_LCD_Key Class_LCD_Key::Decode_Key(const uint16_t &__ADC_Value_12Bit) const
 {
-    if (__ADC_Value_12Bit < 408)
+    // Measured on this board (12-bit ADC): none=270, down=760, up=1220,
+    // right=1695, left=2175, center=2740. Use midpoint thresholds.
+    const uint16_t key_value = __ADC_Value_12Bit;
+
+    if (key_value < 515)
     {
-        return (BSP_LCD_Key_CENTER);
+        return (BSP_LCD_Key_NONE);
     }
-    else if (__ADC_Value_12Bit < 1225)
-    {
-        return (BSP_LCD_Key_LEFT);
-    }
-    else if (__ADC_Value_12Bit < 2046)
-    {
-        return (BSP_LCD_Key_RIGHT);
-    }
-    else if (__ADC_Value_12Bit < 2868)
+    else if (key_value < 990)
     {
         return (BSP_LCD_Key_DOWN);
     }
-    else if (__ADC_Value_12Bit < 3687)
+    else if (key_value < 1457)
     {
         return (BSP_LCD_Key_UP);
     }
+    else if (key_value < 1935)
+    {
+        return (BSP_LCD_Key_RIGHT);
+    }
+    else if (key_value < 2457)
+    {
+        return (BSP_LCD_Key_LEFT);
+    }
     else
     {
-        return (BSP_LCD_Key_NONE);
+        return (BSP_LCD_Key_CENTER);
     }
 }
 

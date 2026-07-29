@@ -36,7 +36,7 @@ Struct_ADC_Manage_Object ADC3_Manage_Object = {nullptr};
  */
 void ADC_Init(ADC_HandleTypeDef *hadc, uint16_t Sample_Number)
 {
-    HAL_ADCEx_Calibration_Start(hadc, ADC_CALIB_OFFSET, ADC_SINGLE_ENDED);
+    HAL_ADCEx_Calibration_Start(hadc, ADC_CALIB_OFFSET, ADC_DIFFERENTIAL_ENDED);
 
     if (hadc->Instance == ADC1)
     {

@@ -174,7 +174,8 @@ void TIM_1ms_CAN_PeriodElapsedCallback()
         // CAN_Transmit_Data(&hfdcan2, 0x1fe, CAN2_0x1fe_Tx_Data, 8);
     }
 
-    CAN_Transmit_Data(&hfdcan1, 0x1fe, CAN1_0x1fe_Tx_Data, 8);
+    // C610/2006 uses 0x200 for motor IDs 0x201~0x204 on CAN1.
+    CAN_Transmit_Data(&hfdcan1, 0x200, CAN1_0x200_Tx_Data, 8);
 }
 
 /**

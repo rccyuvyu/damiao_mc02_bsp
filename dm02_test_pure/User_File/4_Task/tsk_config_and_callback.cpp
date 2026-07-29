@@ -23,10 +23,13 @@
 #include "2_Device/BSP/Power/bsp_power.h"
 #include "2_Device/BSP/Key/bsp_key.h"
 #include "2_Device/BSP/LCD/bsp_lcd.h"
+#include "2_Device/BSP/LCD/bsp_lcd_key.h"
 #include "1_Middleware/Algorithm/Filter/Kalman/alg_filter_kalman.h"
 #include "1_Middleware/Algorithm/Matrix/alg_matrix.h"
 #include "1_Middleware/Driver/WDG/drv_wdg.h"
+#include "1_Middleware/Driver/ADC/drv_adc.h"
 #include "1_Middleware/System/Timestamp/sys_timestamp.h"
+#include <cstdio>
 
 /* Private macros ------------------------------------------------------------*/
 
@@ -36,6 +39,307 @@
 
 // 全局初始化完成标志位
 bool init_finished = false;
+
+namespace
+{
+// 2006 + C610, IDs are the default DJI IDs. Change only these constants if
+// the two motor controllers are configured differently.
+Class_Motor_DJI_C610 motor_left;
+Class_Motor_DJI_C610 motor_right;
+
+constexpr uint16_t LINE_SENSOR_PIN[5] = {
+    LINE_SENSOR_0_Pin, LINE_SENSOR_1_Pin, LINE_SENSOR_2_Pin,
+    LINE_SENSOR_3_Pin, LINE_SENSOR_4_Pin};
+GPIO_TypeDef *const LINE_SENSOR_PORT[5] = {
+    LINE_SENSOR_0_GPIO_Port, LINE_SENSOR_1_GPIO_Port, LINE_SENSOR_2_GPIO_Port,
+    LINE_SENSOR_3_GPIO_Port, LINE_SENSOR_4_GPIO_Port};
+
+// The TCRT5000 board is low when it sees the black line.
+constexpr GPIO_PinState LINE_BLACK_STATE = GPIO_PIN_RESET;
+// Swap these signs if a motor is mounted in the opposite direction.
+constexpr float LEFT_MOTOR_SIGN = 1.0f;
+constexpr float RIGHT_MOTOR_SIGN = -1.0f;
+constexpr float LINE_BASE_SPEED = 5.0f; // rad/s at the wheel/output shaft
+constexpr float LINE_KP = 2.0f;
+constexpr float LINE_KD = 0.8f;
+
+enum class LineRunState : uint8_t { Idle, LeavingStart, Running, Finished };
+LineRunState line_state = LineRunState::Idle;
+float line_last_error = 0.0f;
+float line_previous_error = 0.0f;
+uint32_t line_clear_count = 0;
+uint64_t line_start_time = 0;
+uint64_t line_finish_time = 0;
+uint8_t line_marker_stable = 0;
+uint32_t line_display_tick = 0;
+
+uint8_t menu_selected = 0;
+uint8_t menu_active_test = 0;
+bool menu_running = false;
+volatile bool menu_dirty = true;
+uint64_t menu_start_time = 0;
+
+bool LineSensorBlack(uint8_t index)
+{
+    return HAL_GPIO_ReadPin(LINE_SENSOR_PORT[index], LINE_SENSOR_PIN[index]) == LINE_BLACK_STATE;
+}
+
+uint8_t LineBlackCount()
+{
+    uint8_t count = 0;
+    for (uint8_t i = 0; i < 5; ++i)
+    {
+        count += LineSensorBlack(i) ? 1u : 0u;
+    }
+    return count;
+}
+
+float LineError()
+{
+    static constexpr float weight[5] = {-2.0f, -1.0f, 0.0f, 1.0f, 2.0f};
+    float sum = 0.0f;
+    uint8_t count = 0;
+    for (uint8_t i = 0; i < 5; ++i)
+    {
+        if (LineSensorBlack(i))
+        {
+            sum += weight[i];
+            ++count;
+        }
+    }
+    if (count != 0u)
+    {
+        line_last_error = sum / static_cast<float>(count);
+    }
+    return line_last_error;
+}
+
+void LineSetSpeed(float left, float right)
+{
+    motor_left.Set_Target_Omega(LEFT_MOTOR_SIGN * left);
+    motor_right.Set_Target_Omega(RIGHT_MOTOR_SIGN * right);
+}
+
+void LineStop()
+{
+    LineSetSpeed(0.0f, 0.0f);
+}
+
+void LineSensorInit()
+{
+    GPIO_InitTypeDef config = {};
+    config.Mode = GPIO_MODE_INPUT;
+    config.Pull = GPIO_NOPULL;
+    config.Speed = GPIO_SPEED_FREQ_LOW;
+    for (uint8_t i = 0; i < 5; ++i)
+    {
+        config.Pin = LINE_SENSOR_PIN[i];
+        HAL_GPIO_Init(LINE_SENSOR_PORT[i], &config);
+    }
+}
+
+void Motor_CAN_Callback(FDCAN_RxHeaderTypeDef &header, uint8_t *)
+{
+    if (header.Identifier == 0x201u)
+    {
+        motor_left.CAN_RxCpltCallback();
+    }
+    else if (header.Identifier == 0x202u)
+    {
+        motor_right.CAN_RxCpltCallback();
+    }
+}
+
+void LineFollowerStart()
+{
+    line_state = LineRunState::LeavingStart;
+    line_start_time = SYS_Timestamp.Get_Current_Timestamp();
+    line_finish_time = 0;
+    line_clear_count = 0;
+    line_marker_stable = 0;
+    line_last_error = 0.0f;
+    line_previous_error = 0.0f;
+}
+
+void LineFollowerProcess1ms()
+{
+    if (line_state == LineRunState::Idle || line_state == LineRunState::Finished)
+    {
+        LineStop();
+        return;
+    }
+
+    const uint8_t black_count = LineBlackCount();
+    const bool marker = black_count >= 4u;
+    const float error = LineError();
+    const float correction = LINE_KP * error + LINE_KD * (error - line_previous_error);
+    line_previous_error = error;
+
+    // Slow down on a wide marker and during a sharp correction.
+    float base_speed = LINE_BASE_SPEED;
+    if (marker || error > 1.2f || error < -1.2f)
+    {
+        base_speed *= 0.55f;
+    }
+    LineSetSpeed(base_speed - correction, base_speed + correction);
+
+    if (line_state == LineRunState::LeavingStart)
+    {
+        if (!marker)
+        {
+            ++line_clear_count;
+        }
+        else
+        {
+            line_clear_count = 0;
+        }
+        if (line_clear_count >= 150u)
+        {
+            line_state = LineRunState::Running;
+        }
+    }
+    else if (line_state == LineRunState::Running)
+    {
+        if (marker && (SYS_Timestamp.Get_Current_Timestamp() - line_start_time) > 500000u)
+        {
+            if (++line_marker_stable >= 5u)
+            {
+                line_state = LineRunState::Finished;
+                line_finish_time = SYS_Timestamp.Get_Current_Timestamp();
+                LineStop();
+            }
+        }
+        else
+        {
+            line_marker_stable = 0;
+        }
+    }
+}
+
+void MenuHandleKey1ms()
+{
+    if (BSP_LCD_Key.Get_Key_Status() != BSP_LCD_Key_Status_TRIG_FREE_PRESSED)
+    {
+        return;
+    }
+
+    const Enum_BSP_LCD_Key key = BSP_LCD_Key.Get_Key();
+    if (!menu_running && key == BSP_LCD_Key_UP && menu_selected > 0u)
+    {
+        --menu_selected;
+        menu_dirty = true;
+    }
+    else if (!menu_running && key == BSP_LCD_Key_DOWN && menu_selected < 4u)
+    {
+        ++menu_selected;
+        menu_dirty = true;
+    }
+    else if (!menu_running && key == BSP_LCD_Key_CENTER)
+    {
+        menu_active_test = static_cast<uint8_t>(menu_selected + 2u);
+        menu_start_time = SYS_Timestamp.Get_Current_Timestamp();
+        menu_running = true;
+        menu_dirty = true;
+
+        if (menu_active_test == 2u)
+        {
+            LineFollowerStart();
+        }
+    }
+    else if (menu_running && key == BSP_LCD_Key_LEFT)
+    {
+        menu_running = false;
+        line_state = LineRunState::Idle;
+        LineStop();
+        menu_dirty = true;
+    }
+}
+
+void LineFollowerDisplay()
+{
+    const uint32_t now = HAL_GetTick();
+    static bool display_initialized = false;
+    static bool display_was_running = false;
+    static uint8_t drawn_menu_selected = 0;
+    const bool first_display = !display_initialized;
+    const bool mode_changed = display_was_running != menu_running;
+    const bool redraw_menu = first_display || menu_dirty || mode_changed;
+    if (!redraw_menu && now - line_display_tick < 50u)
+    {
+        return;
+    }
+    line_display_tick = now;
+    menu_dirty = false;
+    display_initialized = true;
+
+    uint64_t elapsed = 0;
+    if (menu_running && menu_active_test == 2u &&
+        (line_state == LineRunState::LeavingStart || line_state == LineRunState::Running))
+    {
+        elapsed = SYS_Timestamp.Get_Current_Timestamp() - line_start_time;
+    }
+    else if (menu_running && menu_active_test == 2u && line_state == LineRunState::Finished)
+    {
+        elapsed = line_finish_time - line_start_time;
+    }
+    else if (menu_running)
+    {
+        elapsed = SYS_Timestamp.Get_Current_Timestamp() - menu_start_time;
+    }
+
+    char timer_text[32];
+    const char *state = !menu_running ? "READY" :
+                        (menu_active_test == 2u && line_state == LineRunState::Finished) ? "DONE" : "RUN";
+    std::snprintf(timer_text, sizeof(timer_text), "T%d %-5s %02lu.%03lus", menu_running ? menu_active_test : 0,
+                  state,
+                  static_cast<unsigned long>(elapsed / 1000000ULL),
+                  static_cast<unsigned long>((elapsed / 1000ULL) % 1000ULL));
+
+    // Draw over the fixed-width text directly. Avoid clearing the whole
+    // header first, which produces a visible black flash on the LCD.
+    BSP_LCD.Draw_String(8, 4, timer_text, BSP_LCD_COLOR_GREEN, BSP_LCD_COLOR_BLACK, 2);
+
+    auto draw_menu_item = [](const uint8_t index)
+    {
+        const uint16_t y = static_cast<uint16_t>(42u + index * 35u);
+        const bool selected = index == menu_selected;
+        BSP_LCD.Fill_Rectangle(0, y - 2u, 240, 30,
+                               selected ? BSP_LCD_COLOR_BLUE : BSP_LCD_COLOR_BLACK);
+        char item_text[16];
+        std::snprintf(item_text, sizeof(item_text), "Test %u", static_cast<unsigned>(index + 2u));
+        BSP_LCD.Draw_String(14, y + 4u, item_text,
+                            selected ? BSP_LCD_COLOR_WHITE : BSP_LCD_COLOR_GREEN,
+                            selected ? BSP_LCD_COLOR_BLUE : BSP_LCD_COLOR_BLACK, 2);
+    };
+
+    if (!menu_running && redraw_menu)
+    {
+        if (first_display || mode_changed)
+        {
+            BSP_LCD.Fill_Rectangle(0, 38, 240, 202, BSP_LCD_COLOR_BLACK);
+            for (uint8_t i = 0; i < 5u; ++i)
+            {
+                draw_menu_item(i);
+            }
+        }
+        else if (drawn_menu_selected != menu_selected)
+        {
+            draw_menu_item(drawn_menu_selected);
+            draw_menu_item(menu_selected);
+        }
+        drawn_menu_selected = menu_selected;
+    }
+    else if (menu_running && redraw_menu)
+    {
+        BSP_LCD.Fill_Rectangle(0, 38, 240, 202, BSP_LCD_COLOR_BLACK);
+        char item_text[24];
+        std::snprintf(item_text, sizeof(item_text), "Test %u running", static_cast<unsigned>(menu_active_test));
+        BSP_LCD.Draw_String(14, 85, item_text, BSP_LCD_COLOR_YELLOW, BSP_LCD_COLOR_BLACK, 2);
+        BSP_LCD.Draw_String(14, 125, "LEFT: menu", BSP_LCD_COLOR_GRAY, BSP_LCD_COLOR_BLACK, 2);
+    }
+    display_was_running = menu_running;
+}
+}
 
 /* Private function declarations ---------------------------------------------*/
 
@@ -82,12 +386,6 @@ void Task3600s_Callback()
  */
 void Task1s_Callback()
 {   
-
-    static uint32_t count = 0;
-    char lcd_buf[32];
-    count++;
-    snprintf(lcd_buf, sizeof(lcd_buf), "Count: %lu", count);
-    BSP_LCD.Draw_String(8, 20, lcd_buf, BSP_LCD_COLOR_GREEN, BSP_LCD_COLOR_BLACK, 2);
 }
 
 /**
@@ -97,6 +395,12 @@ void Task1s_Callback()
 void Task1ms_Callback()
 {
     TIM_1ms_IWDG_PeriodElapsedCallback();
+    TIM_1ms_CAN_PeriodElapsedCallback();
+    BSP_LCD_Key.TIM_1ms_Process_PeriodElapsedCallback();
+    MenuHandleKey1ms();
+    motor_left.TIM_Calculate_PeriodElapsedCallback();
+    motor_right.TIM_Calculate_PeriodElapsedCallback();
+    LineFollowerProcess1ms();
 }
 
 /**
@@ -126,6 +430,20 @@ void Task_Init()
     SYS_Timestamp.Init(&htim5);
 
     LCD_Demo_Init();
+    ADC_Init(&hadc1, 1);
+    BSP_LCD_Key.Init(&ADC1_Manage_Object, 0, 4095);
+    LineSensorInit();
+
+    motor_left.Init(&hfdcan1, Motor_DJI_ID_0x201, Motor_DJI_Control_Method_OMEGA, 36.0f);
+    motor_right.Init(&hfdcan1, Motor_DJI_ID_0x202, Motor_DJI_Control_Method_OMEGA, 36.0f);
+    motor_left.PID_Omega.Init(2.5f, 0.0f, 0.03f, 0.0f, 2.0f, 8.0f, 0.001f);
+    motor_right.PID_Omega.Init(2.5f, 0.0f, 0.03f, 0.0f, 2.0f, 8.0f, 0.001f);
+    // All three FDCAN peripherals use Classic CAN frames. The chassis motors
+    // are connected to CAN1; CAN2 and CAN3 remain available as normal CAN buses.
+    CAN_Init(&hfdcan1, Motor_CAN_Callback);
+    CAN_Init(&hfdcan2, nullptr);
+    CAN_Init(&hfdcan3, nullptr);
+    LineStop();
 
     // 定时器中断初始化
     HAL_TIM_Base_Start_IT(&htim4);
@@ -144,7 +462,7 @@ void Task_Init()
  */
 void Task_Loop()
 {
-
+    LineFollowerDisplay();
 }
 
 /**
