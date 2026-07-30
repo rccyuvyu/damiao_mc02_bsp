@@ -75,6 +75,7 @@ uint8_t menu_selected = 0;
 uint8_t menu_active_test = 0;
 bool menu_running = false;
 volatile bool menu_dirty = true;
+volatile bool menu_full_redraw = true;
 uint64_t menu_start_time = 0;
 
 bool LineSensorBlack(uint8_t index)
@@ -258,6 +259,7 @@ void MenuHandleKey1ms()
         menu_start_time = SYS_Timestamp.Get_Current_Timestamp();
         menu_running = true;
         menu_dirty = true;
+        menu_full_redraw = true;
 
         if (menu_active_test == 2u)
         {
@@ -270,6 +272,7 @@ void MenuHandleKey1ms()
         line_state = LineRunState::Idle;
         LineStop();
         menu_dirty = true;
+        menu_full_redraw = true;
     }
 }
 
@@ -282,6 +285,7 @@ void LineFollowerDisplay()
     const bool first_display = !display_initialized;
     const bool mode_changed = display_was_running != menu_running;
     const bool redraw_menu = first_display || menu_dirty || mode_changed;
+    const bool full_redraw = first_display || mode_changed || menu_full_redraw;
     if (!redraw_menu && now - line_display_tick < App_Config::LCD_REFRESH_PERIOD_MS)
     {
         return;
@@ -342,7 +346,7 @@ void LineFollowerDisplay()
 
     if (!menu_running && redraw_menu)
     {
-        if (first_display || mode_changed)
+        if (full_redraw)
         {
             BSP_LCD.Fill_Rectangle(0, 38, 240, 202, BSP_LCD_COLOR_BLACK);
             for (uint8_t i = 0; i < 5u; ++i)
@@ -364,6 +368,10 @@ void LineFollowerDisplay()
         std::snprintf(item_text, sizeof(item_text), "Test %u running", static_cast<unsigned>(menu_active_test));
         BSP_LCD.Draw_String(14, 85, item_text, BSP_LCD_COLOR_YELLOW, BSP_LCD_COLOR_BLACK, 2);
         BSP_LCD.Draw_String(14, 125, "LEFT: menu", BSP_LCD_COLOR_GRAY, BSP_LCD_COLOR_BLACK, 2);
+    }
+    if (full_redraw)
+    {
+        menu_full_redraw = false;
     }
     display_was_running = menu_running;
 }
