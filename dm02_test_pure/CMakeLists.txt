@@ -89,7 +89,6 @@ add_link_options(-mcpu=cortex-m7 -mthumb -mthumb-interwork)
 add_link_options(-T ${LINKER_SCRIPT})
 
 add_executable(${PROJECT_NAME}.elf ${SOURCES} ${LINKER_SCRIPT})
-set_target_properties(${PROJECT_NAME}.elf PROPERTIES SUFFIX "")
 
 # User link_libraries BEGIN
 
