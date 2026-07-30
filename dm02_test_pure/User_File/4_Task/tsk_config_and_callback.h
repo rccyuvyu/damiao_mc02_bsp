@@ -19,11 +19,22 @@ extern "C" {
 
 /* Includes ------------------------------------------------------------------*/
 
+#include <stdint.h>
+
+typedef struct __attribute__((packed)) VisionToGimbal
+{
+    uint8_t head[2];
+    float distance;
+    uint16_t crc16;
+} VisionToGimbal;
+
 /* Exported macros -----------------------------------------------------------*/
 
 /* Exported types ------------------------------------------------------------*/
 
 /* Exported variables --------------------------------------------------------*/
+
+extern volatile VisionToGimbal vision_to_gimbal;
 
 /* Exported function declarations --------------------------------------------*/
 

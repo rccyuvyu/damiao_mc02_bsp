@@ -15,6 +15,7 @@
 #include "tsk_config_and_callback.h"
 
 #include "2_Device/Motor/Motor_DJI/dvc_motor_dji.h"
+#include "2_Device/Motor/Motor_DM/dvc_motor_dm.h"
 #include "2_Device/BSP/BMI088/bsp_bmi088.h"
 #include "2_Device/Plotter/Vofa/dvc_vofa.h"
 #include "2_Device/BSP/W25Q64JV/bsp_w25q64jv.h"
@@ -28,9 +29,12 @@
 #include "1_Middleware/Algorithm/Matrix/alg_matrix.h"
 #include "1_Middleware/Driver/WDG/drv_wdg.h"
 #include "1_Middleware/Driver/ADC/drv_adc.h"
+#include "1_Middleware/Driver/SPI/drv_spi.h"
+#include "1_Middleware/Driver/USB/drv_usb.h"
 #include "1_Middleware/System/Timestamp/sys_timestamp.h"
 #include "app_config.h"
 #include <cstdio>
+#include <cmath>
 
 /* Private macros ------------------------------------------------------------*/
 
@@ -46,6 +50,10 @@ Class_Motor_DJI_C610 motor_left_front;
 Class_Motor_DJI_C610 motor_right_front;
 Class_Motor_DJI_C610 motor_left_rear;
 Class_Motor_DJI_C610 motor_right_rear;
+Class_Motor_DM_Normal water_pipe_motor;
+
+// Latest vision packet from the USB virtual serial port.
+volatile VisionToGimbal vision_to_gimbal = {{'S', 'P'}, 0.0f, 0u};
 
 // Five line sensors, ordered from left to right.
 uint16_t Line_Sensor_Pin[5] = {
@@ -65,6 +73,7 @@ enum class LineRunState : uint8_t { Idle, LeavingStart, Running, Finished };
 LineRunState line_state = LineRunState::Idle;
 float line_last_error = 0.0f;
 float line_previous_error = 0.0f;
+float line_yaw_target = 0.0f;
 uint32_t line_clear_count = 0;
 uint64_t line_start_time = 0;
 uint64_t line_finish_time = 0;
@@ -133,6 +142,28 @@ void LineStop()
     LineSetSpeed(0.0f, 0.0f);
 }
 
+float NormalizeYawError(float error)
+{
+    constexpr float YAW_PI = 3.14159265358979323846f;
+    while (error > YAW_PI)
+    {
+        error -= 2.0f * YAW_PI;
+    }
+    while (error < -YAW_PI)
+    {
+        error += 2.0f * YAW_PI;
+    }
+    return error;
+}
+
+float LineYawCorrection()
+{
+    const float yaw = BSP_BMI088.Get_Euler_Angle()[0][0];
+    const float yaw_error = NormalizeYawError(line_yaw_target - yaw);
+    const float correction = App_Config::LINE_YAW_KP * yaw_error;
+    return fminf(fmaxf(correction, -App_Config::LINE_YAW_CORRECTION_MAX), App_Config::LINE_YAW_CORRECTION_MAX);
+}
+
 void LineSensorInit()
 {
     GPIO_InitTypeDef config = {};
@@ -148,7 +179,11 @@ void LineSensorInit()
 
 void Motor_CAN_Callback(FDCAN_RxHeaderTypeDef &header, uint8_t *)
 {
-    if (header.Identifier == App_Config::MOTOR_LEFT_FRONT_CAN_ID)
+    if (header.Identifier == App_Config::WATER_PIPE_CAN_RX_ID)
+    {
+        water_pipe_motor.CAN_RxCpltCallback();
+    }
+    else if (header.Identifier == App_Config::MOTOR_LEFT_FRONT_CAN_ID)
     {
         motor_left_front.CAN_RxCpltCallback();
     }
@@ -166,6 +201,82 @@ void Motor_CAN_Callback(FDCAN_RxHeaderTypeDef &header, uint8_t *)
     }
 }
 
+float WaterPipeTargetAngle()
+{
+    const float center = (App_Config::WATER_PIPE_ANGLE_MIN + App_Config::WATER_PIPE_ANGLE_MAX) * 0.5f;
+    const float target = center + vision_to_gimbal.distance * App_Config::WATER_PIPE_DISTANCE_TO_ANGLE_GAIN;
+    return fminf(fmaxf(target, App_Config::WATER_PIPE_ANGLE_MIN), App_Config::WATER_PIPE_ANGLE_MAX);
+}
+
+void WaterPipeTaskStart()
+{
+    water_pipe_motor.Set_Control_Angle(WaterPipeTargetAngle());
+    water_pipe_motor.Set_Control_Omega(App_Config::WATER_PIPE_OMEGA_MAX);
+    water_pipe_motor.CAN_Send_Enter();
+}
+
+void WaterPipeTaskProcess1ms()
+{
+    if (!menu_running || menu_active_test != 3u)
+    {
+        return;
+    }
+
+    water_pipe_motor.Set_Control_Angle(WaterPipeTargetAngle());
+    water_pipe_motor.Set_Control_Omega(App_Config::WATER_PIPE_OMEGA_MAX);
+    water_pipe_motor.TIM_Send_PeriodElapsedCallback();
+}
+
+void BMI088_SPI_Callback(uint8_t *, uint8_t *, uint16_t, uint16_t)
+{
+    BSP_BMI088.SPI_RxCpltCallback();
+}
+
+void Vision_USB_ReceiveCallback(uint8_t *buffer, uint16_t length)
+{
+    static uint8_t frame[sizeof(VisionToGimbal)] = {};
+    static uint8_t frame_index = 0;
+
+    for (uint16_t i = 0; i < length; ++i)
+    {
+        const uint8_t byte = buffer[i];
+        if (frame_index == 0u)
+        {
+            if (byte == 'S')
+            {
+                frame[frame_index++] = byte;
+            }
+            continue;
+        }
+
+        if (frame_index == 1u && byte != 'P')
+        {
+            frame_index = byte == 'S' ? 1u : 0u;
+            if (frame_index == 1u)
+            {
+                frame[0] = byte;
+            }
+            continue;
+        }
+
+        frame[frame_index++] = byte;
+        if (frame_index == sizeof(VisionToGimbal))
+        {
+            VisionToGimbal packet;
+            memcpy(&packet, frame, sizeof(packet));
+            if (packet.head[0] == 'S' && packet.head[1] == 'P')
+            {
+                // CRC is intentionally ignored; the packet header is the only validation.
+                vision_to_gimbal.head[0] = packet.head[0];
+                vision_to_gimbal.head[1] = packet.head[1];
+                vision_to_gimbal.distance = packet.distance;
+                vision_to_gimbal.crc16 = packet.crc16;
+            }
+            frame_index = 0u;
+        }
+    }
+}
+
 void LineFollowerStart()
 {
     line_state = LineRunState::LeavingStart;
@@ -175,6 +286,7 @@ void LineFollowerStart()
     line_marker_stable = 0;
     line_last_error = 0.0f;
     line_previous_error = 0.0f;
+    line_yaw_target = BSP_BMI088.Get_Euler_Angle()[0][0];
 }
 
 void LineFollowerProcess1ms()
@@ -188,6 +300,14 @@ void LineFollowerProcess1ms()
     }
 
     const uint8_t black_count = LineBlackCount();
+    if (black_count == 0u)
+    {
+        const float correction = LineYawCorrection();
+        line_previous_error = line_last_error;
+        LineSetSpeed(App_Config::LINE_BASE_SPEED + correction, App_Config::LINE_BASE_SPEED - correction);
+        return;
+    }
+
     // The 5-sensor bar sees three sensors on the perpendicular start line.
     const bool marker = black_count >= App_Config::LINE_MARKER_MIN_BLACK_COUNT;
     const float error = LineError();
@@ -200,7 +320,7 @@ void LineFollowerProcess1ms()
     {
         base_speed *= App_Config::LINE_CORNER_SPEED_SCALE;
     }
-    LineSetSpeed(base_speed - correction, base_speed + correction);
+    LineSetSpeed(base_speed + correction, base_speed - correction);
 
     if (line_state == LineRunState::LeavingStart)
     {
@@ -265,12 +385,20 @@ void MenuHandleKey1ms()
         {
             LineFollowerStart();
         }
+        else if (menu_active_test == 3u)
+        {
+            WaterPipeTaskStart();
+        }
     }
     else if (menu_running && key == BSP_LCD_Key_LEFT)
     {
         menu_running = false;
         line_state = LineRunState::Idle;
         LineStop();
+        if (menu_active_test == 3u)
+        {
+            water_pipe_motor.CAN_Send_Exit();
+        }
         menu_dirty = true;
         menu_full_redraw = true;
     }
@@ -429,6 +557,7 @@ void Task1ms_Callback()
     motor_left_rear.TIM_Calculate_PeriodElapsedCallback();
     motor_right_rear.TIM_Calculate_PeriodElapsedCallback();
     LineFollowerProcess1ms();
+    WaterPipeTaskProcess1ms();
 }
 
 /**
@@ -456,9 +585,13 @@ void Task10us_Callback()
 void Task_Init()
 {
     SYS_Timestamp.Init(&htim5);
+    HAL_TIM_Base_Start_IT(&htim5);
 
     // Enable the board-controlled 5 V rail; keep both 24 V rails disabled.
     BSP_Power.Init(false, false, true);
+    USB_Init(Vision_USB_ReceiveCallback);
+    SPI_Init(&hspi2, BMI088_SPI_Callback);
+    BSP_BMI088.Init();
     LCD_Demo_Init();
     ADC_Init(&hadc1, 1);
     BSP_LCD_Key.Init(&ADC1_Manage_Object, 0, 4095);
@@ -476,13 +609,14 @@ void Task_Init()
     // All three FDCAN peripherals use Classic CAN frames. The chassis motors
     // are connected to CAN1; CAN2 and CAN3 remain available as normal CAN buses.
     CAN_Init(&hfdcan1, Motor_CAN_Callback);
-    CAN_Init(&hfdcan2, nullptr);
+    water_pipe_motor.Init(&hfdcan2, App_Config::WATER_PIPE_CAN_RX_ID, App_Config::WATER_PIPE_CAN_TX_ID,
+                          Motor_DM_Control_Method_NORMAL_ANGLE_OMEGA);
+    CAN_Init(&hfdcan2, Motor_CAN_Callback);
     CAN_Init(&hfdcan3, nullptr);
     LineStop();
 
     // 定时器中断初始化
     HAL_TIM_Base_Start_IT(&htim4);
-    HAL_TIM_Base_Start_IT(&htim5);
     HAL_TIM_Base_Start_IT(&htim6);
     HAL_TIM_Base_Start_IT(&htim7);
     HAL_TIM_Base_Start_IT(&htim8);
@@ -511,6 +645,8 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
     {
         return;
     }
+
+    BSP_BMI088.EXTI_Flag_Callback(GPIO_Pin);
 }
 
 /**
@@ -528,6 +664,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
     // 选择回调函数
     if (htim->Instance == TIM4)
     {
+        BSP_BMI088.TIM_10us_Calculate_PeriodElapsedCallback();
         Task10us_Callback();
     }
     else if (htim->Instance == TIM5)
@@ -544,6 +681,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
     }
     else if (htim->Instance == TIM8)
     {
+        BSP_BMI088.TIM_125us_Calculate_PeriodElapsedCallback();
         Task125us_Callback();
     }
 }
