@@ -199,7 +199,7 @@ void LineFollowerProcess1ms()
     {
         base_speed *= App_Config::LINE_CORNER_SPEED_SCALE;
     }
-    LineSetSpeed(base_speed - correction, base_speed + correction);
+    LineSetSpeed(base_speed + correction, base_speed - correction);
 
     if (line_state == LineRunState::LeavingStart)
     {
@@ -316,6 +316,16 @@ void LineFollowerDisplay()
     // Draw over the fixed-width text directly. Avoid clearing the whole
     // header first, which produces a visible black flash on the LCD.
     BSP_LCD.Draw_String(8, 4, timer_text, BSP_LCD_COLOR_GREEN, BSP_LCD_COLOR_BLACK, 2);
+
+    const uint16_t line_sensor_adc = ADC1_Manage_Object.ADC_Data[App_Config::LINE_SENSOR_ADC_BUFFER_INDEX];
+    const uint32_t line_sensor_mv =
+        (static_cast<uint32_t>(line_sensor_adc) * 3300u + 2047u) / 4095u;
+    char adc_text[32];
+    std::snprintf(adc_text, sizeof(adc_text), "ADC %4u %lu.%03luV",
+                  static_cast<unsigned>(line_sensor_adc),
+                  static_cast<unsigned long>(line_sensor_mv / 1000u),
+                  static_cast<unsigned long>(line_sensor_mv % 1000u));
+    BSP_LCD.Draw_String(8, 218, adc_text, BSP_LCD_COLOR_YELLOW, BSP_LCD_COLOR_BLACK, 2);
 
     auto draw_menu_item = [](const uint8_t index)
     {
@@ -452,7 +462,15 @@ void Task_Init()
     // Enable the board-controlled 5 V rail; keep both 24 V rails disabled.
     BSP_Power.Init(false, false, true);
     LCD_Demo_Init();
-    ADC_Init(&hadc1, 1);
+
+    // TIM2 initially assigns PA2 to the Servo 2 PWM output. Restore PA2 to ADC mode after all peripheral initialisation.
+    GPIO_InitTypeDef line_sensor_adc_config = {};
+    line_sensor_adc_config.Pin = GPIO_PIN_2;
+    line_sensor_adc_config.Mode = GPIO_MODE_ANALOG;
+    line_sensor_adc_config.Pull = GPIO_NOPULL;
+    HAL_GPIO_Init(GPIOA, &line_sensor_adc_config);
+
+    ADC_Init(&hadc1, 2);
     BSP_LCD_Key.Init(&ADC1_Manage_Object, 0, 4095);
     LineSensorInit();
 
