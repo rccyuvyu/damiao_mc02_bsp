@@ -61,6 +61,7 @@ include_directories(Core/Inc Drivers/STM32H7xx_HAL_Driver/Inc Drivers/STM32H7xx_
 # User include_directories BEGIN
 
 include_directories(User_File)
+include_directories(User_Config)
 
 # User include_directories END
 

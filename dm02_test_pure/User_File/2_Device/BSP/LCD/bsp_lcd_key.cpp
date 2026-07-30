@@ -12,6 +12,7 @@
 /* Includes ------------------------------------------------------------------*/
 
 #include "bsp_lcd_key.h"
+#include "app_config.h"
 
 /* Private macros ------------------------------------------------------------*/
 
@@ -128,23 +129,23 @@ Enum_BSP_LCD_Key Class_LCD_Key::Decode_Key(const uint16_t &__ADC_Value_12Bit) co
     // right=1695, left=2175, center=2740. Use midpoint thresholds.
     const uint16_t key_value = __ADC_Value_12Bit;
 
-    if (key_value < 515)
+    if (key_value < App_Config::LCD_KEY_NONE_MAX)
     {
         return (BSP_LCD_Key_NONE);
     }
-    else if (key_value < 990)
+    else if (key_value < App_Config::LCD_KEY_DOWN_MAX)
     {
         return (BSP_LCD_Key_DOWN);
     }
-    else if (key_value < 1457)
+    else if (key_value < App_Config::LCD_KEY_UP_MAX)
     {
         return (BSP_LCD_Key_UP);
     }
-    else if (key_value < 1935)
+    else if (key_value < App_Config::LCD_KEY_RIGHT_MAX)
     {
         return (BSP_LCD_Key_RIGHT);
     }
-    else if (key_value < 2457)
+    else if (key_value < App_Config::LCD_KEY_LEFT_MAX)
     {
         return (BSP_LCD_Key_LEFT);
     }

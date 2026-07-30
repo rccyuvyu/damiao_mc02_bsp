@@ -29,6 +29,7 @@
 #include "1_Middleware/Driver/WDG/drv_wdg.h"
 #include "1_Middleware/Driver/ADC/drv_adc.h"
 #include "1_Middleware/System/Timestamp/sys_timestamp.h"
+#include "app_config.h"
 #include <cstdio>
 
 /* Private macros ------------------------------------------------------------*/
@@ -40,29 +41,26 @@
 // 全局初始化完成标志位
 bool init_finished = false;
 
+// Chassis motors are global so other control modules can access their state.
+Class_Motor_DJI_C610 motor_left_front;
+Class_Motor_DJI_C610 motor_right_front;
+Class_Motor_DJI_C610 motor_left_rear;
+Class_Motor_DJI_C610 motor_right_rear;
+
+// Five line sensors, ordered from left to right.
+uint16_t Line_Sensor_Pin[5] = {
+    LINE_SENSOR_0_Pin, LINE_SENSOR_1_Pin, LINE_SENSOR_2_Pin,
+    LINE_SENSOR_3_Pin, LINE_SENSOR_4_Pin};
+GPIO_TypeDef *Line_Sensor_Port[5] = {
+    LINE_SENSOR_0_GPIO_Port, LINE_SENSOR_1_GPIO_Port, LINE_SENSOR_2_GPIO_Port,
+    LINE_SENSOR_3_GPIO_Port, LINE_SENSOR_4_GPIO_Port};
+GPIO_PinState Line_Sensor_Data[5] = {
+    GPIO_PIN_SET, GPIO_PIN_SET, GPIO_PIN_SET, GPIO_PIN_SET, GPIO_PIN_SET};
+
 namespace
 {
 // 2006 + C610, IDs are the default DJI IDs. Change only these constants if
 // the two motor controllers are configured differently.
-Class_Motor_DJI_C610 motor_left;
-Class_Motor_DJI_C610 motor_right;
-
-constexpr uint16_t LINE_SENSOR_PIN[5] = {
-    LINE_SENSOR_0_Pin, LINE_SENSOR_1_Pin, LINE_SENSOR_2_Pin,
-    LINE_SENSOR_3_Pin, LINE_SENSOR_4_Pin};
-GPIO_TypeDef *const LINE_SENSOR_PORT[5] = {
-    LINE_SENSOR_0_GPIO_Port, LINE_SENSOR_1_GPIO_Port, LINE_SENSOR_2_GPIO_Port,
-    LINE_SENSOR_3_GPIO_Port, LINE_SENSOR_4_GPIO_Port};
-
-// The TCRT5000 board is low when it sees the black line.
-constexpr GPIO_PinState LINE_BLACK_STATE = GPIO_PIN_RESET;
-// Swap these signs if a motor is mounted in the opposite direction.
-constexpr float LEFT_MOTOR_SIGN = 1.0f;
-constexpr float RIGHT_MOTOR_SIGN = -1.0f;
-constexpr float LINE_BASE_SPEED = 5.0f; // rad/s at the wheel/output shaft
-constexpr float LINE_KP = 2.0f;
-constexpr float LINE_KD = 0.8f;
-
 enum class LineRunState : uint8_t { Idle, LeavingStart, Running, Finished };
 LineRunState line_state = LineRunState::Idle;
 float line_last_error = 0.0f;
@@ -81,7 +79,15 @@ uint64_t menu_start_time = 0;
 
 bool LineSensorBlack(uint8_t index)
 {
-    return HAL_GPIO_ReadPin(LINE_SENSOR_PORT[index], LINE_SENSOR_PIN[index]) == LINE_BLACK_STATE;
+    return Line_Sensor_Data[index] == App_Config::LINE_BLACK_STATE;
+}
+
+void LineSensorRead()
+{
+    for (uint8_t i = 0; i < 5u; ++i)
+    {
+        Line_Sensor_Data[i] = HAL_GPIO_ReadPin(Line_Sensor_Port[i], Line_Sensor_Pin[i]);
+    }
 }
 
 uint8_t LineBlackCount()
@@ -96,14 +102,13 @@ uint8_t LineBlackCount()
 
 float LineError()
 {
-    static constexpr float weight[5] = {-2.0f, -1.0f, 0.0f, 1.0f, 2.0f};
     float sum = 0.0f;
     uint8_t count = 0;
     for (uint8_t i = 0; i < 5; ++i)
     {
         if (LineSensorBlack(i))
         {
-            sum += weight[i];
+            sum += App_Config::LINE_WEIGHT[i];
             ++count;
         }
     }
@@ -116,8 +121,10 @@ float LineError()
 
 void LineSetSpeed(float left, float right)
 {
-    motor_left.Set_Target_Omega(LEFT_MOTOR_SIGN * left);
-    motor_right.Set_Target_Omega(RIGHT_MOTOR_SIGN * right);
+    motor_left_front.Set_Target_Omega(App_Config::MOTOR_LEFT_FRONT_SIGN * left);
+    motor_left_rear.Set_Target_Omega(App_Config::MOTOR_LEFT_REAR_SIGN * left);
+    motor_right_front.Set_Target_Omega(App_Config::MOTOR_RIGHT_FRONT_SIGN * right);
+    motor_right_rear.Set_Target_Omega(App_Config::MOTOR_RIGHT_REAR_SIGN * right);
 }
 
 void LineStop()
@@ -133,20 +140,28 @@ void LineSensorInit()
     config.Speed = GPIO_SPEED_FREQ_LOW;
     for (uint8_t i = 0; i < 5; ++i)
     {
-        config.Pin = LINE_SENSOR_PIN[i];
-        HAL_GPIO_Init(LINE_SENSOR_PORT[i], &config);
+        config.Pin = Line_Sensor_Pin[i];
+        HAL_GPIO_Init(Line_Sensor_Port[i], &config);
     }
 }
 
 void Motor_CAN_Callback(FDCAN_RxHeaderTypeDef &header, uint8_t *)
 {
-    if (header.Identifier == 0x201u)
+    if (header.Identifier == App_Config::MOTOR_LEFT_FRONT_CAN_ID)
     {
-        motor_left.CAN_RxCpltCallback();
+        motor_left_front.CAN_RxCpltCallback();
     }
-    else if (header.Identifier == 0x202u)
+    else if (header.Identifier == App_Config::MOTOR_RIGHT_FRONT_CAN_ID)
     {
-        motor_right.CAN_RxCpltCallback();
+        motor_right_front.CAN_RxCpltCallback();
+    }
+    else if (header.Identifier == App_Config::MOTOR_LEFT_REAR_CAN_ID)
+    {
+        motor_left_rear.CAN_RxCpltCallback();
+    }
+    else if (header.Identifier == App_Config::MOTOR_RIGHT_REAR_CAN_ID)
+    {
+        motor_right_rear.CAN_RxCpltCallback();
     }
 }
 
@@ -163,6 +178,8 @@ void LineFollowerStart()
 
 void LineFollowerProcess1ms()
 {
+    LineSensorRead();
+
     if (line_state == LineRunState::Idle || line_state == LineRunState::Finished)
     {
         LineStop();
@@ -170,16 +187,17 @@ void LineFollowerProcess1ms()
     }
 
     const uint8_t black_count = LineBlackCount();
-    const bool marker = black_count >= 4u;
+    // The 5-sensor bar sees three sensors on the perpendicular start line.
+    const bool marker = black_count >= App_Config::LINE_MARKER_MIN_BLACK_COUNT;
     const float error = LineError();
-    const float correction = LINE_KP * error + LINE_KD * (error - line_previous_error);
+    const float correction = App_Config::LINE_KP * error + App_Config::LINE_KD * (error - line_previous_error);
     line_previous_error = error;
 
     // Slow down on a wide marker and during a sharp correction.
-    float base_speed = LINE_BASE_SPEED;
-    if (marker || error > 1.2f || error < -1.2f)
+    float base_speed = App_Config::LINE_BASE_SPEED;
+    if (marker || error > App_Config::LINE_SHARP_ERROR || error < -App_Config::LINE_SHARP_ERROR)
     {
-        base_speed *= 0.55f;
+        base_speed *= App_Config::LINE_CORNER_SPEED_SCALE;
     }
     LineSetSpeed(base_speed - correction, base_speed + correction);
 
@@ -193,16 +211,16 @@ void LineFollowerProcess1ms()
         {
             line_clear_count = 0;
         }
-        if (line_clear_count >= 150u)
+        if (line_clear_count >= App_Config::LINE_LEAVE_MARKER_MS)
         {
             line_state = LineRunState::Running;
         }
     }
     else if (line_state == LineRunState::Running)
     {
-        if (marker && (SYS_Timestamp.Get_Current_Timestamp() - line_start_time) > 500000u)
+        if (marker && (SYS_Timestamp.Get_Current_Timestamp() - line_start_time) > App_Config::LINE_MIN_RUN_TIME_US)
         {
-            if (++line_marker_stable >= 5u)
+            if (++line_marker_stable >= App_Config::LINE_MARKER_STABLE_MS)
             {
                 line_state = LineRunState::Finished;
                 line_finish_time = SYS_Timestamp.Get_Current_Timestamp();
@@ -264,7 +282,7 @@ void LineFollowerDisplay()
     const bool first_display = !display_initialized;
     const bool mode_changed = display_was_running != menu_running;
     const bool redraw_menu = first_display || menu_dirty || mode_changed;
-    if (!redraw_menu && now - line_display_tick < 50u)
+    if (!redraw_menu && now - line_display_tick < App_Config::LCD_REFRESH_PERIOD_MS)
     {
         return;
     }
@@ -398,8 +416,10 @@ void Task1ms_Callback()
     TIM_1ms_CAN_PeriodElapsedCallback();
     BSP_LCD_Key.TIM_1ms_Process_PeriodElapsedCallback();
     MenuHandleKey1ms();
-    motor_left.TIM_Calculate_PeriodElapsedCallback();
-    motor_right.TIM_Calculate_PeriodElapsedCallback();
+    motor_left_front.TIM_Calculate_PeriodElapsedCallback();
+    motor_right_front.TIM_Calculate_PeriodElapsedCallback();
+    motor_left_rear.TIM_Calculate_PeriodElapsedCallback();
+    motor_right_rear.TIM_Calculate_PeriodElapsedCallback();
     LineFollowerProcess1ms();
 }
 
@@ -429,15 +449,22 @@ void Task_Init()
 {
     SYS_Timestamp.Init(&htim5);
 
+    // Enable the board-controlled 5 V rail; keep both 24 V rails disabled.
+    BSP_Power.Init(false, false, true);
     LCD_Demo_Init();
     ADC_Init(&hadc1, 1);
     BSP_LCD_Key.Init(&ADC1_Manage_Object, 0, 4095);
     LineSensorInit();
 
-    motor_left.Init(&hfdcan1, Motor_DJI_ID_0x201, Motor_DJI_Control_Method_OMEGA, 36.0f);
-    motor_right.Init(&hfdcan1, Motor_DJI_ID_0x202, Motor_DJI_Control_Method_OMEGA, 36.0f);
-    motor_left.PID_Omega.Init(2.5f, 0.0f, 0.03f, 0.0f, 2.0f, 8.0f, 0.001f);
-    motor_right.PID_Omega.Init(2.5f, 0.0f, 0.03f, 0.0f, 2.0f, 8.0f, 0.001f);
+    // Chassis motor mapping: LF=0x203, RF=0x204, LR=0x202, RR=0x201.
+    motor_left_front.Init(&hfdcan1, App_Config::MOTOR_LEFT_FRONT_ID, Motor_DJI_Control_Method_OMEGA, App_Config::MOTOR_GEARBOX_RATE);
+    motor_right_front.Init(&hfdcan1, App_Config::MOTOR_RIGHT_FRONT_ID, Motor_DJI_Control_Method_OMEGA, App_Config::MOTOR_GEARBOX_RATE);
+    motor_left_rear.Init(&hfdcan1, App_Config::MOTOR_LEFT_REAR_ID, Motor_DJI_Control_Method_OMEGA, App_Config::MOTOR_GEARBOX_RATE);
+    motor_right_rear.Init(&hfdcan1, App_Config::MOTOR_RIGHT_REAR_ID, Motor_DJI_Control_Method_OMEGA, App_Config::MOTOR_GEARBOX_RATE);
+    motor_left_front.PID_Omega.Init(App_Config::MOTOR_SPEED_KP, App_Config::MOTOR_SPEED_KI, App_Config::MOTOR_SPEED_KD, App_Config::MOTOR_SPEED_KF, App_Config::MOTOR_SPEED_I_OUT_MAX, App_Config::MOTOR_SPEED_OUT_MAX, App_Config::MOTOR_SPEED_D_T);
+    motor_right_front.PID_Omega.Init(App_Config::MOTOR_SPEED_KP, App_Config::MOTOR_SPEED_KI, App_Config::MOTOR_SPEED_KD, App_Config::MOTOR_SPEED_KF, App_Config::MOTOR_SPEED_I_OUT_MAX, App_Config::MOTOR_SPEED_OUT_MAX, App_Config::MOTOR_SPEED_D_T);
+    motor_left_rear.PID_Omega.Init(App_Config::MOTOR_SPEED_KP, App_Config::MOTOR_SPEED_KI, App_Config::MOTOR_SPEED_KD, App_Config::MOTOR_SPEED_KF, App_Config::MOTOR_SPEED_I_OUT_MAX, App_Config::MOTOR_SPEED_OUT_MAX, App_Config::MOTOR_SPEED_D_T);
+    motor_right_rear.PID_Omega.Init(App_Config::MOTOR_SPEED_KP, App_Config::MOTOR_SPEED_KI, App_Config::MOTOR_SPEED_KD, App_Config::MOTOR_SPEED_KF, App_Config::MOTOR_SPEED_I_OUT_MAX, App_Config::MOTOR_SPEED_OUT_MAX, App_Config::MOTOR_SPEED_D_T);
     // All three FDCAN peripherals use Classic CAN frames. The chassis motors
     // are connected to CAN1; CAN2 and CAN3 remain available as normal CAN buses.
     CAN_Init(&hfdcan1, Motor_CAN_Callback);
