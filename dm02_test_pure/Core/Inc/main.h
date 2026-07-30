@@ -114,6 +114,18 @@ void Error_Handler(void);
 #define SBUS_TX__UART_RX_Pin GPIO_PIN_2
 #define SBUS_TX__UART_RX_GPIO_Port GPIOD
 
+/* Five-channel digital line-sensor connector: P11-1 to P11-5. */
+#define LINE_SENSOR_0_Pin GPIO_PIN_14
+#define LINE_SENSOR_0_GPIO_Port GPIOE
+#define LINE_SENSOR_1_Pin GPIO_PIN_12
+#define LINE_SENSOR_1_GPIO_Port GPIOC
+#define LINE_SENSOR_2_Pin GPIO_PIN_11
+#define LINE_SENSOR_2_GPIO_Port GPIOC
+#define LINE_SENSOR_3_Pin GPIO_PIN_10
+#define LINE_SENSOR_3_GPIO_Port GPIOC
+#define LINE_SENSOR_4_Pin GPIO_PIN_9
+#define LINE_SENSOR_4_GPIO_Port GPIOB
+
 /* USER CODE BEGIN Private defines */
 
 /* USER CODE END Private defines */

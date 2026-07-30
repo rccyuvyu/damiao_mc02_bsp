@@ -1,0 +1,24 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "OpenOCD: Debug",
+            "cwd": "${workspaceFolder}",
+            "executable": "${workspaceFolder}/build/Debug/dm02_test.elf",
+            "request": "launch",
+            "type": "cortex-debug",
+            "servertype": "openocd",
+            "armToolchainPath": "/opt/homebrew/bin",
+            "gdbPath": "/opt/homebrew/bin/arm-none-eabi-gdb",
+            "serverpath": "/Users/char1esss/Documents/Library/xpack-openocd-0.12.0-7/bin/openocd",
+            "configFiles": [
+                "openocd.cfg",
+            ],
+            "liveWatch": {
+                "enabled": true,
+                "samplesPerSecond": 20
+            },
+            "preLaunchTask": "CMake: build"
+        }
+    ]
+}

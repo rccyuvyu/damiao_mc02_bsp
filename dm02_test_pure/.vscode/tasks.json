@@ -1,0 +1,57 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"type": "shell",
+			"label": "OpenOCD: flash",
+			"command": "/Users/char1esss/Documents/Library/xpack-openocd-0.12.0-7/bin/openocd",
+			"options": {
+				"cwd": "${workspaceFolder}"
+			},
+			"args": [
+				"-f",
+				"openocd.cfg",
+				"-c",
+				"program build/Debug/dm02_test.elf verify reset exit"
+			],
+			"group": {
+				"kind": "build",
+				"isDefault": true
+			},
+			"dependsOn": "CMake: build",
+			"detail": "Download program into STM32",
+			"problemMatcher": []
+		},
+		{
+			"type": "shell",
+			"label": "OpenOCD: flash under reset",
+			"command": "/Users/char1esss/Documents/Library/xpack-openocd-0.12.0-7/bin/openocd",
+			"options": {
+				"cwd": "${workspaceFolder}"
+			},
+			"args": [
+				"-f",
+				"openocd-under-reset.cfg",
+				"-c",
+				"program build/Debug/dm02_test.elf verify reset exit"
+			],
+			"group": "build",
+			"dependsOn": "CMake: build",
+			"detail": "Download program into STM32 while holding NRST low",
+			"problemMatcher": []
+		},
+		{
+			"type": "shell",
+			"label": "CMake: build",
+			"command": "cmake",
+			"args": [
+				"--build",
+				"--preset",
+				"Debug"
+			],
+			"group": "build",
+			"problemMatcher": [],
+			"detail": "Build the Debug preset with CMake"
+		}
+	]
+}
