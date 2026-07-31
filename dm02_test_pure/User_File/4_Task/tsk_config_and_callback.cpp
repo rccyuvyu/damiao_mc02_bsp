@@ -51,9 +51,12 @@ Class_Motor_DJI_C610 motor_right_front;
 Class_Motor_DJI_C610 motor_left_rear;
 Class_Motor_DJI_C610 motor_right_rear;
 Class_Motor_DM_Normal water_pipe_motor;
+Class_PID water_pipe_ball_position_pid;
+Class_PID water_pipe_ball_speed_pid;
 
 // Latest vision packet from the USB virtual serial port.
 volatile VisionToGimbal vision_to_gimbal = {{'S', 'P'}, 0.0f, 0.0f, 0.0f, 0u, 0u, 0u, 0u};
+volatile float water_pipe_motor_target_angle = 0.0f;
 
 // Four line sensors, ordered from right to left (index 0 -> 3).
 uint16_t Line_Sensor_Pin[App_Config::LINE_SENSOR_COUNT] = {
@@ -201,31 +204,61 @@ void Motor_CAN_Callback(FDCAN_RxHeaderTypeDef &header, uint8_t *)
     }
 }
 
-float WaterPipeTargetAngle()
+float WaterPipeHorizontalMotorAngle()
 {
-    const float distance = vision_to_gimbal.distance;
     const float pipe_angle_span = App_Config::WATER_PIPE_PIPE_ANGLE_AT_MAX_DEG -
                                   App_Config::WATER_PIPE_PIPE_ANGLE_AT_MIN_DEG;
     const float motor_angle_span = App_Config::WATER_PIPE_ANGLE_MAX - App_Config::WATER_PIPE_ANGLE_MIN;
-    const float horizontal_motor_angle = App_Config::WATER_PIPE_ANGLE_MIN +
-                                         (-App_Config::WATER_PIPE_PIPE_ANGLE_AT_MIN_DEG / pipe_angle_span) *
-                                             motor_angle_span;
+    return App_Config::WATER_PIPE_ANGLE_MIN +
+           (-App_Config::WATER_PIPE_PIPE_ANGLE_AT_MIN_DEG / pipe_angle_span) *
+               motor_angle_span;
+}
 
-    // Positive distance means the ball is away from the right-hand pivot.
-    // A positive distance or outward velocity therefore needs a negative pipe
-    // tilt, which corresponds to increasing the motor angle in this geometry.
-    const float target = horizontal_motor_angle +
-                         distance * App_Config::WATER_PIPE_DISTANCE_TO_ANGLE_GAIN +
-                         vision_to_gimbal.distance_velocity * App_Config::WATER_PIPE_DISTANCE_VELOCITY_TO_ANGLE_GAIN;
-    const float limited_target = fminf(fmaxf(target, App_Config::WATER_PIPE_ANGLE_MIN), App_Config::WATER_PIPE_ANGLE_MAX);
+float WaterPipeAngleToMotorAngle(float pipe_angle_deg)
+{
+    const float pipe_angle_min = fminf(App_Config::WATER_PIPE_PIPE_ANGLE_AT_MIN_DEG,
+                                       App_Config::WATER_PIPE_PIPE_ANGLE_AT_MAX_DEG);
+    const float pipe_angle_max = fmaxf(App_Config::WATER_PIPE_PIPE_ANGLE_AT_MIN_DEG,
+                                       App_Config::WATER_PIPE_PIPE_ANGLE_AT_MAX_DEG);
+    pipe_angle_deg = fminf(fmaxf(pipe_angle_deg, pipe_angle_min), pipe_angle_max);
+
+    const float pipe_angle_span = App_Config::WATER_PIPE_PIPE_ANGLE_AT_MAX_DEG -
+                                  App_Config::WATER_PIPE_PIPE_ANGLE_AT_MIN_DEG;
+    const float motor_angle_span = App_Config::WATER_PIPE_ANGLE_MAX - App_Config::WATER_PIPE_ANGLE_MIN;
+    const float target = App_Config::WATER_PIPE_ANGLE_MIN +
+                         ((pipe_angle_deg - App_Config::WATER_PIPE_PIPE_ANGLE_AT_MIN_DEG) / pipe_angle_span) *
+                             motor_angle_span;
+    return fminf(fmaxf(target, App_Config::WATER_PIPE_ANGLE_MIN), App_Config::WATER_PIPE_ANGLE_MAX);
+}
+
+float WaterPipeTargetAngle()
+{
+    const float ball_position = vision_to_gimbal.distance;
+    const float ball_velocity = vision_to_gimbal.velocity;
+
+    water_pipe_ball_position_pid.Set_Target(App_Config::WATER_PIPE_BALL_TARGET_POSITION);
+    water_pipe_ball_position_pid.Set_Now(ball_position);
+    water_pipe_ball_position_pid.TIM_Calculate_PeriodElapsedCallback();
+    const float target_speed = water_pipe_ball_position_pid.Get_Out();
+
+    water_pipe_ball_speed_pid.Set_Target(target_speed);
+    water_pipe_ball_speed_pid.Set_Now(ball_velocity);
+    water_pipe_ball_speed_pid.TIM_Calculate_PeriodElapsedCallback();
+    const float target_pipe_angle_deg = fminf(
+        fmaxf(water_pipe_ball_speed_pid.Get_Out(), -App_Config::WATER_PIPE_PIPE_ANGLE_LIMIT_DEG),
+        App_Config::WATER_PIPE_PIPE_ANGLE_LIMIT_DEG);
+
+    const float limited_target = WaterPipeAngleToMotorAngle(target_pipe_angle_deg);
     vision_to_gimbal.target_angle = limited_target;
+    water_pipe_motor_target_angle = limited_target;
     return limited_target;
 }
 
 float WaterPipeControlTorque()
 {
     const float current_angle = water_pipe_motor.Get_Now_Angle();
-    const float position_error = vision_to_gimbal.target_angle - current_angle;
+    const float target_angle = water_pipe_motor_target_angle;
+    const float position_error = target_angle - current_angle;
     float torque = App_Config::WATER_PIPE_POSITION_KP * position_error
                  - App_Config::WATER_PIPE_POSITION_KD * water_pipe_motor.Get_Now_Omega();
 
@@ -256,7 +289,10 @@ void WaterPipeSetTorqueControl()
 
 void WaterPipeTaskStart()
 {
-    WaterPipeTargetAngle();
+    water_pipe_ball_position_pid.Set_Integral_Error(0.0f);
+    water_pipe_ball_speed_pid.Set_Integral_Error(0.0f);
+    vision_to_gimbal.target_angle = WaterPipeHorizontalMotorAngle();
+    water_pipe_motor_target_angle = vision_to_gimbal.target_angle;
     WaterPipeSetTorqueControl();
     water_pipe_motor.CAN_Send_Enter();
 }
@@ -268,6 +304,7 @@ void WaterPipeTaskProcess1ms()
         return;
     }
 
+    WaterPipeTargetAngle();
     WaterPipeSetTorqueControl();
     water_pipe_motor.TIM_Send_PeriodElapsedCallback();
 }
@@ -281,7 +318,6 @@ void Vision_USB_ReceiveCallback(uint8_t *buffer, uint16_t length)
 {
     static uint8_t frame[sizeof(VisionToGimbalPacket)] = {};
     static uint8_t frame_index = 0;
-    static float previous_distance = 0.0f;
 
     for (uint16_t i = 0; i < length; ++i)
     {
@@ -317,33 +353,18 @@ void Vision_USB_ReceiveCallback(uint8_t *buffer, uint16_t length)
                 vision_to_gimbal.head[1] = packet.head[1];
                 // The host sign convention is positive away from the right-hand pivot.
                 vision_to_gimbal.distance = packet.distance;
+                vision_to_gimbal.velocity = fminf(
+                    fmaxf(packet.velocity, -App_Config::WATER_PIPE_BALL_VELOCITY_MAX),
+                    App_Config::WATER_PIPE_BALL_VELOCITY_MAX);
                 vision_to_gimbal.crc16 = packet.crc16;
                 const uint64_t now = SYS_Timestamp.Get_Current_Timestamp();
                 if (vision_to_gimbal.rx_count != 0u)
                 {
                     const uint64_t period_us = now - vision_to_gimbal.last_rx_timestamp_us;
                     vision_to_gimbal.rx_period_us = static_cast<uint32_t>(period_us);
-                    if (period_us >= 1000u && period_us <= 200000u)
-                    {
-                        const float period_s = static_cast<float>(period_us) * 1.0e-6f;
-                        const float velocity = (vision_to_gimbal.distance - previous_distance) / period_s;
-                        vision_to_gimbal.distance_velocity = fminf(
-                            fmaxf(velocity, -App_Config::WATER_PIPE_BALL_VELOCITY_MAX),
-                            App_Config::WATER_PIPE_BALL_VELOCITY_MAX);
-                    }
-                    else
-                    {
-                        vision_to_gimbal.distance_velocity = 0.0f;
-                    }
                 }
-                else
-                {
-                    vision_to_gimbal.distance_velocity = 0.0f;
-                }
-                previous_distance = vision_to_gimbal.distance;
                 vision_to_gimbal.last_rx_timestamp_us = now;
                 ++vision_to_gimbal.rx_count;
-                WaterPipeTargetAngle();
             }
             frame_index = 0u;
         }
@@ -671,6 +692,22 @@ void Task_Init()
     motor_right_front.Init(&hfdcan1, App_Config::MOTOR_RIGHT_FRONT_ID, Motor_DJI_Control_Method_OMEGA, App_Config::MOTOR_GEARBOX_RATE);
     motor_left_rear.Init(&hfdcan1, App_Config::MOTOR_LEFT_REAR_ID, Motor_DJI_Control_Method_OMEGA, App_Config::MOTOR_GEARBOX_RATE);
     motor_right_rear.Init(&hfdcan1, App_Config::MOTOR_RIGHT_REAR_ID, Motor_DJI_Control_Method_OMEGA, App_Config::MOTOR_GEARBOX_RATE);
+    water_pipe_ball_position_pid.Init(
+        App_Config::WATER_PIPE_BALL_POSITION_KP,
+        App_Config::WATER_PIPE_BALL_POSITION_KI,
+        App_Config::WATER_PIPE_BALL_POSITION_KD,
+        0.0f,
+        0.0f,
+        App_Config::WATER_PIPE_BALL_TARGET_SPEED_MAX,
+        0.001f);
+    water_pipe_ball_speed_pid.Init(
+        App_Config::WATER_PIPE_BALL_SPEED_KP,
+        App_Config::WATER_PIPE_BALL_SPEED_KI,
+        App_Config::WATER_PIPE_BALL_SPEED_KD,
+        0.0f,
+        0.0f,
+        App_Config::WATER_PIPE_PIPE_ANGLE_LIMIT_DEG,
+        0.001f);
     motor_left_front.PID_Omega.Init(App_Config::MOTOR_SPEED_KP, App_Config::MOTOR_SPEED_KI, App_Config::MOTOR_SPEED_KD, App_Config::MOTOR_SPEED_KF, App_Config::MOTOR_SPEED_I_OUT_MAX, App_Config::MOTOR_SPEED_OUT_MAX, App_Config::MOTOR_SPEED_D_T);
     motor_right_front.PID_Omega.Init(App_Config::MOTOR_SPEED_KP, App_Config::MOTOR_SPEED_KI, App_Config::MOTOR_SPEED_KD, App_Config::MOTOR_SPEED_KF, App_Config::MOTOR_SPEED_I_OUT_MAX, App_Config::MOTOR_SPEED_OUT_MAX, App_Config::MOTOR_SPEED_D_T);
     motor_left_rear.PID_Omega.Init(App_Config::MOTOR_SPEED_KP, App_Config::MOTOR_SPEED_KI, App_Config::MOTOR_SPEED_KD, App_Config::MOTOR_SPEED_KF, App_Config::MOTOR_SPEED_I_OUT_MAX, App_Config::MOTOR_SPEED_OUT_MAX, App_Config::MOTOR_SPEED_D_T);

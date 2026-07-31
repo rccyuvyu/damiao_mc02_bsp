@@ -25,6 +25,7 @@ typedef struct __attribute__((packed)) VisionToGimbalPacket
 {
     uint8_t head[2];
     float distance;
+    float velocity;
     uint16_t crc16;
 } VisionToGimbalPacket;
 
@@ -33,7 +34,7 @@ typedef struct VisionToGimbal
     uint8_t head[2];
     float distance;
     float target_angle;
-    float distance_velocity;
+    float velocity;
     uint16_t crc16;
     uint32_t rx_count;
     uint32_t rx_period_us;
@@ -47,6 +48,7 @@ typedef struct VisionToGimbal
 /* Exported variables --------------------------------------------------------*/
 
 extern volatile VisionToGimbal vision_to_gimbal;
+extern volatile float water_pipe_motor_target_angle;
 
 /* Exported function declarations --------------------------------------------*/
 
