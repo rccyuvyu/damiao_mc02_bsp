@@ -47,15 +47,15 @@ Class_Motor_DJI_C610 motor_right_front;
 Class_Motor_DJI_C610 motor_left_rear;
 Class_Motor_DJI_C610 motor_right_rear;
 
-// Five line sensors, ordered from left to right.
-uint16_t Line_Sensor_Pin[5] = {
+// Four line sensors, ordered from right to left (index 0 -> 3).
+uint16_t Line_Sensor_Pin[App_Config::LINE_SENSOR_COUNT] = {
     LINE_SENSOR_0_Pin, LINE_SENSOR_1_Pin, LINE_SENSOR_2_Pin,
-    LINE_SENSOR_3_Pin, LINE_SENSOR_4_Pin};
-GPIO_TypeDef *Line_Sensor_Port[5] = {
+    LINE_SENSOR_3_Pin};
+GPIO_TypeDef *Line_Sensor_Port[App_Config::LINE_SENSOR_COUNT] = {
     LINE_SENSOR_0_GPIO_Port, LINE_SENSOR_1_GPIO_Port, LINE_SENSOR_2_GPIO_Port,
-    LINE_SENSOR_3_GPIO_Port, LINE_SENSOR_4_GPIO_Port};
-GPIO_PinState Line_Sensor_Data[5] = {
-    GPIO_PIN_SET, GPIO_PIN_SET, GPIO_PIN_SET, GPIO_PIN_SET, GPIO_PIN_SET};
+    LINE_SENSOR_3_GPIO_Port};
+GPIO_PinState Line_Sensor_Data[App_Config::LINE_SENSOR_COUNT] = {
+    GPIO_PIN_SET, GPIO_PIN_SET, GPIO_PIN_SET, GPIO_PIN_SET};
 
 namespace
 {
@@ -84,7 +84,7 @@ bool LineSensorBlack(uint8_t index)
 
 void LineSensorRead()
 {
-    for (uint8_t i = 0; i < 5u; ++i)
+    for (uint8_t i = 0; i < App_Config::LINE_SENSOR_COUNT; ++i)
     {
         Line_Sensor_Data[i] = HAL_GPIO_ReadPin(Line_Sensor_Port[i], Line_Sensor_Pin[i]);
     }
@@ -93,7 +93,7 @@ void LineSensorRead()
 uint8_t LineBlackCount()
 {
     uint8_t count = 0;
-    for (uint8_t i = 0; i < 5; ++i)
+    for (uint8_t i = 0; i < App_Config::LINE_SENSOR_COUNT; ++i)
     {
         count += LineSensorBlack(i) ? 1u : 0u;
     }
@@ -104,7 +104,7 @@ float LineError()
 {
     float sum = 0.0f;
     uint8_t count = 0;
-    for (uint8_t i = 0; i < 5; ++i)
+    for (uint8_t i = 0; i < App_Config::LINE_SENSOR_COUNT; ++i)
     {
         if (LineSensorBlack(i))
         {
@@ -138,7 +138,7 @@ void LineSensorInit()
     config.Mode = GPIO_MODE_INPUT;
     config.Pull = GPIO_NOPULL;
     config.Speed = GPIO_SPEED_FREQ_LOW;
-    for (uint8_t i = 0; i < 5; ++i)
+    for (uint8_t i = 0; i < App_Config::LINE_SENSOR_COUNT; ++i)
     {
         config.Pin = Line_Sensor_Pin[i];
         HAL_GPIO_Init(Line_Sensor_Port[i], &config);
@@ -187,7 +187,7 @@ void LineFollowerProcess1ms()
     }
 
     const uint8_t black_count = LineBlackCount();
-    // The 5-sensor bar sees three sensors on the perpendicular start line.
+    // A perpendicular start or finish line covers at least three sensors.
     const bool marker = black_count >= App_Config::LINE_MARKER_MIN_BLACK_COUNT;
     const float error = LineError();
     const float correction = App_Config::LINE_KP * error + App_Config::LINE_KD * (error - line_previous_error);

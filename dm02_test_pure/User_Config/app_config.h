@@ -34,12 +34,13 @@ namespace App_Config
     constexpr float MOTOR_LEFT_REAR_SIGN = 1.0f;
     constexpr float MOTOR_RIGHT_REAR_SIGN = -1.0f;
 
-    // Five-channel line tracking.
+    // Four-channel line tracking, ordered from right to left (0 -> 3).
+    constexpr uint8_t LINE_SENSOR_COUNT = 4u;
     constexpr GPIO_PinState LINE_BLACK_STATE = GPIO_PIN_RESET;
     constexpr float LINE_BASE_SPEED = 5.0f;
     constexpr float LINE_KP = 2.0f;
     constexpr float LINE_KD = 0.8f;
-    constexpr float LINE_WEIGHT[5] = {-2.0f, -1.0f, 0.0f, 1.0f, 2.0f};
+    constexpr float LINE_WEIGHT[4] = {2.5f, 1.0f, -1.0f, -2.5f};
     constexpr float LINE_SHARP_ERROR = 1.2f;
     constexpr float LINE_CORNER_SPEED_SCALE = 0.55f;
     constexpr uint8_t LINE_MARKER_MIN_BLACK_COUNT = 3u;
