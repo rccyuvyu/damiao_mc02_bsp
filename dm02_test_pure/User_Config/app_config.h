@@ -34,20 +34,21 @@ constexpr float MOTOR_RIGHT_FRONT_SIGN = -1.0f;
 constexpr float MOTOR_LEFT_REAR_SIGN = 1.0f;
 constexpr float MOTOR_RIGHT_REAR_SIGN = -1.0f;
 
-// Five-channel line tracking.
-constexpr GPIO_PinState LINE_BLACK_STATE = GPIO_PIN_RESET;
-constexpr float LINE_BASE_SPEED = 7.0f;
-constexpr float LINE_KP = 1.0f;
-constexpr float LINE_KD = 0.8f;
-constexpr float LINE_WEIGHT[5] = {-2.0f, -1.0f, 0.0f, 1.0f, 2.0f};
-constexpr float LINE_SHARP_ERROR = 1.2f;
-constexpr float LINE_CORNER_SPEED_SCALE = 0.55f;
-constexpr float LINE_YAW_KP = 50.0f;
-constexpr float LINE_YAW_CORRECTION_MAX = 2.0f;
-constexpr uint8_t LINE_MARKER_MIN_BLACK_COUNT = 5u;
-constexpr uint32_t LINE_LEAVE_MARKER_MS = 150u;
-constexpr uint32_t LINE_MIN_RUN_TIME_US = 500000u;
-constexpr uint8_t LINE_MARKER_STABLE_MS = 5u;
+    // Four-channel line tracking, ordered from right to left (0 -> 3).
+    constexpr uint8_t LINE_SENSOR_COUNT = 4u;
+    constexpr GPIO_PinState LINE_BLACK_STATE = GPIO_PIN_RESET;
+    constexpr float LINE_BASE_SPEED = 5.0f;
+    constexpr float LINE_KP = 2.0f;
+    constexpr float LINE_KD = 0.8f;
+    constexpr float LINE_WEIGHT[4] = {2.5f, 1.0f, -1.0f, -2.5f};
+    constexpr float LINE_SHARP_ERROR = 1.2f;
+    constexpr float LINE_CORNER_SPEED_SCALE = 0.55f;
+    constexpr float LINE_YAW_KP = 50.0f;
+    constexpr float LINE_YAW_CORRECTION_MAX = 2.0f;
+    constexpr uint8_t LINE_MARKER_MIN_BLACK_COUNT = 3u;
+    constexpr uint32_t LINE_LEAVE_MARKER_MS = 150u;
+    constexpr uint32_t LINE_MIN_RUN_TIME_US = 500000u;
+    constexpr uint8_t LINE_MARKER_STABLE_MS = 5u;
 
 // Task 3: DM4310 external position-loop control.
 constexpr uint8_t WATER_PIPE_CAN_RX_ID = 0x10u;
