@@ -401,9 +401,11 @@ void Class_Motor_DM_Normal::Data_Process()
     Rx_Data.Control_Status = static_cast<Enum_Motor_DM_Control_Status_Normal>(tmp_buffer->Control_Status_Enum);
 
     // 计算电机本身信息
-    Rx_Data.Now_Angle = Basic_Math_Int_To_Float(tmp_encoder, 0x7fff, (1 << 16) - 1, 0, Angle_Max);
-    Rx_Data.Now_Omega = Basic_Math_Int_To_Float(tmp_omega, 0x7ff, (1 << 12) - 1, 0, Omega_Max);
-    Rx_Data.Now_Torque = Basic_Math_Int_To_Float(tmp_torque, 0x7ff, (1 << 12) - 1, 0, Torque_Max);
+    // MIT protocol values are signed physical quantities encoded into
+    // unsigned fields. Keep the application coordinates centered at zero.
+    Rx_Data.Now_Angle = Basic_Math_Int_To_Float(tmp_encoder, 0, (1 << 16) - 1, -Angle_Max, Angle_Max);
+    Rx_Data.Now_Omega = Basic_Math_Int_To_Float(tmp_omega, 0, (1 << 12) - 1, -Omega_Max, Omega_Max);
+    Rx_Data.Now_Torque = Basic_Math_Int_To_Float(tmp_torque, 0, (1 << 12) - 1, -Torque_Max, Torque_Max);
     Rx_Data.Now_MOS_Temperature = tmp_buffer->MOS_Temperature + BASIC_MATH_CELSIUS_TO_KELVIN;
     Rx_Data.Now_Rotor_Temperature = tmp_buffer->Rotor_Temperature + BASIC_MATH_CELSIUS_TO_KELVIN;
 }
@@ -423,9 +425,9 @@ void Class_Motor_DM_Normal::Output()
 
         uint16_t tmp_angle, tmp_omega, tmp_torque, tmp_k_p, tmp_k_d;
 
-        tmp_angle = Basic_Math_Float_To_Int(Control_Angle, 0, Angle_Max, 0x7fff, (1 << 16) - 1);
-        tmp_omega = Basic_Math_Float_To_Int(Control_Omega, 0, Omega_Max, 0x7ff, (1 << 12) - 1);
-        tmp_torque = Basic_Math_Float_To_Int(Control_Torque, 0, Torque_Max, 0x7ff, (1 << 12) - 1);
+        tmp_angle = Basic_Math_Float_To_Int(Control_Angle, -Angle_Max, Angle_Max, 0, (1 << 16) - 1);
+        tmp_omega = Basic_Math_Float_To_Int(Control_Omega, -Omega_Max, Omega_Max, 0, (1 << 12) - 1);
+        tmp_torque = Basic_Math_Float_To_Int(Control_Torque, -Torque_Max, Torque_Max, 0, (1 << 12) - 1);
         tmp_k_p = Basic_Math_Float_To_Int(K_P, 0, 500.0f, 0, (1 << 12) - 1);
         tmp_k_d = Basic_Math_Float_To_Int(K_D, 0, 5.0f, 0, (1 << 12) - 1);
 

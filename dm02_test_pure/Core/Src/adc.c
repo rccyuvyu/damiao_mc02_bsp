@@ -73,11 +73,13 @@ void MX_ADC1_Init(void)
     Error_Handler();
   }
 
-  /** Configure LCD five-way key channel: PA5 / ADC1 channel 18. */
-  sConfig.Channel = ADC_CHANNEL_18;
+  /** Configure LCD five-way key channel: PA5 / ADC1 channel 19. */
+  sConfig.Channel = ADC_CHANNEL_19;
   sConfig.Rank = ADC_REGULAR_RANK_1;
-  sConfig.SamplingTime = ADC_SAMPLETIME_32CYCLES_5;
-  sConfig.SingleDiff = ADC_DIFFERENTIAL_ENDED;
+  // The LCD key ladder has a relatively high source impedance. Allow the
+  // ADC sample capacitor enough time to settle before conversion.
+  sConfig.SamplingTime = ADC_SAMPLETIME_810CYCLES_5;
+  sConfig.SingleDiff = ADC_SINGLE_ENDED;
   sConfig.OffsetNumber = ADC_OFFSET_NONE;
   sConfig.Offset = 0;
   sConfig.OffsetSignedSaturation = DISABLE;

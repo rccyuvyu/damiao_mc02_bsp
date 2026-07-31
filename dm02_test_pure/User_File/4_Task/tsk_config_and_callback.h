@@ -21,11 +21,23 @@ extern "C" {
 
 #include <stdint.h>
 
-typedef struct __attribute__((packed)) VisionToGimbal
+typedef struct __attribute__((packed)) VisionToGimbalPacket
 {
     uint8_t head[2];
     float distance;
     uint16_t crc16;
+} VisionToGimbalPacket;
+
+typedef struct VisionToGimbal
+{
+    uint8_t head[2];
+    float distance;
+    float target_angle;
+    float distance_velocity;
+    uint16_t crc16;
+    uint32_t rx_count;
+    uint32_t rx_period_us;
+    uint64_t last_rx_timestamp_us;
 } VisionToGimbal;
 
 /* Exported macros -----------------------------------------------------------*/

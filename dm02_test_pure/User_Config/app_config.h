@@ -49,20 +49,31 @@ constexpr uint32_t LINE_LEAVE_MARKER_MS = 150u;
 constexpr uint32_t LINE_MIN_RUN_TIME_US = 500000u;
 constexpr uint8_t LINE_MARKER_STABLE_MS = 5u;
 
-// Task 3: DM4310 water-pipe position control. Replace these values after calibration.
+// Task 3: DM4310 external position-loop control.
 constexpr uint8_t WATER_PIPE_CAN_RX_ID = 0x10u;
 constexpr uint8_t WATER_PIPE_CAN_TX_ID = 0x01u;
-constexpr float WATER_PIPE_ANGLE_MIN = 0.0f;
-constexpr float WATER_PIPE_ANGLE_MAX = 0.0f;
-constexpr float WATER_PIPE_OMEGA_MAX = 2.0f;
-constexpr float WATER_PIPE_DISTANCE_TO_ANGLE_GAIN = 1.0f;
 
-// Measured LCD-key ADC values, with midpoint thresholds between adjacent keys.
-constexpr uint16_t LCD_KEY_NONE_MAX = 515u;
-constexpr uint16_t LCD_KEY_DOWN_MAX = 990u;
-constexpr uint16_t LCD_KEY_UP_MAX = 1457u;
-constexpr uint16_t LCD_KEY_RIGHT_MAX = 1935u;
-constexpr uint16_t LCD_KEY_LEFT_MAX = 2457u;
+constexpr float WATER_PIPE_ANGLE_MIN = -2.76f; //3.15
+constexpr float WATER_PIPE_ANGLE_MAX = -2.20f; //-3.23
+constexpr float WATER_PIPE_PIPE_ANGLE_AT_MIN_DEG = 3.15f;
+constexpr float WATER_PIPE_PIPE_ANGLE_AT_MAX_DEG = -3.23f;
+
+constexpr float WATER_PIPE_POSITION_KP = 0.5f;
+constexpr float WATER_PIPE_POSITION_KD = 0.0f;
+constexpr float WATER_PIPE_TORQUE_MAX = 0.4f;
+constexpr float WATER_PIPE_DISTANCE_TO_ANGLE_GAIN = 0.00009f;
+constexpr float WATER_PIPE_DISTANCE_VELOCITY_TO_ANGLE_GAIN = 0.00004f;
+constexpr float WATER_PIPE_BALL_VELOCITY_MAX = 3000.0f;
+constexpr float WATER_PIPE_BALL_MASS_KG = 0.004f;
+constexpr float WATER_PIPE_POSITION_DEADBAND = 0.005f;
+constexpr float WATER_PIPE_STATIC_FRICTION_TORQUE = 0.29f;
+
+// LCD key thresholds, set midway between the measured key voltages.
+constexpr uint16_t LCD_KEY_CENTER_MAX = 600u;
+constexpr uint16_t LCD_KEY_LEFT_MAX = 1450u;
+constexpr uint16_t LCD_KEY_RIGHT_MAX = 2250u;
+constexpr uint16_t LCD_KEY_UP_MAX = 3050u;
+constexpr uint16_t LCD_KEY_DOWN_MAX = 3700u;
 
 constexpr uint32_t LCD_REFRESH_PERIOD_MS = 50u;
 }

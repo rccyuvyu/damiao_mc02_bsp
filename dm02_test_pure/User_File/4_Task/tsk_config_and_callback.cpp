@@ -53,7 +53,7 @@ Class_Motor_DJI_C610 motor_right_rear;
 Class_Motor_DM_Normal water_pipe_motor;
 
 // Latest vision packet from the USB virtual serial port.
-volatile VisionToGimbal vision_to_gimbal = {{'S', 'P'}, 0.0f, 0u};
+volatile VisionToGimbal vision_to_gimbal = {{'S', 'P'}, 0.0f, 0.0f, 0.0f, 0u, 0u, 0u, 0u};
 
 // Five line sensors, ordered from left to right.
 uint16_t Line_Sensor_Pin[5] = {
@@ -80,9 +80,9 @@ uint64_t line_finish_time = 0;
 uint8_t line_marker_stable = 0;
 uint32_t line_display_tick = 0;
 
-uint8_t menu_selected = 0;
-uint8_t menu_active_test = 0;
-bool menu_running = false;
+volatile uint8_t menu_selected = 0;
+volatile uint8_t menu_active_test = 0;
+volatile bool menu_running = false;
 volatile bool menu_dirty = true;
 volatile bool menu_full_redraw = true;
 uint64_t menu_start_time = 0;
@@ -203,15 +203,61 @@ void Motor_CAN_Callback(FDCAN_RxHeaderTypeDef &header, uint8_t *)
 
 float WaterPipeTargetAngle()
 {
-    const float center = (App_Config::WATER_PIPE_ANGLE_MIN + App_Config::WATER_PIPE_ANGLE_MAX) * 0.5f;
-    const float target = center + vision_to_gimbal.distance * App_Config::WATER_PIPE_DISTANCE_TO_ANGLE_GAIN;
-    return fminf(fmaxf(target, App_Config::WATER_PIPE_ANGLE_MIN), App_Config::WATER_PIPE_ANGLE_MAX);
+    const float distance = vision_to_gimbal.distance;
+    const float pipe_angle_span = App_Config::WATER_PIPE_PIPE_ANGLE_AT_MAX_DEG -
+                                  App_Config::WATER_PIPE_PIPE_ANGLE_AT_MIN_DEG;
+    const float motor_angle_span = App_Config::WATER_PIPE_ANGLE_MAX - App_Config::WATER_PIPE_ANGLE_MIN;
+    const float horizontal_motor_angle = App_Config::WATER_PIPE_ANGLE_MIN +
+                                         (-App_Config::WATER_PIPE_PIPE_ANGLE_AT_MIN_DEG / pipe_angle_span) *
+                                             motor_angle_span;
+
+    // Positive distance means the ball is away from the right-hand pivot.
+    // A positive distance or outward velocity therefore needs a negative pipe
+    // tilt, which corresponds to increasing the motor angle in this geometry.
+    const float target = horizontal_motor_angle +
+                         distance * App_Config::WATER_PIPE_DISTANCE_TO_ANGLE_GAIN +
+                         vision_to_gimbal.distance_velocity * App_Config::WATER_PIPE_DISTANCE_VELOCITY_TO_ANGLE_GAIN;
+    const float limited_target = fminf(fmaxf(target, App_Config::WATER_PIPE_ANGLE_MIN), App_Config::WATER_PIPE_ANGLE_MAX);
+    vision_to_gimbal.target_angle = limited_target;
+    return limited_target;
+}
+
+float WaterPipeControlTorque()
+{
+    const float current_angle = water_pipe_motor.Get_Now_Angle();
+    const float position_error = vision_to_gimbal.target_angle - current_angle;
+    float torque = App_Config::WATER_PIPE_POSITION_KP * position_error
+                 - App_Config::WATER_PIPE_POSITION_KD * water_pipe_motor.Get_Now_Omega();
+
+    if (fabsf(position_error) > App_Config::WATER_PIPE_POSITION_DEADBAND)
+    {
+        torque += copysignf(App_Config::WATER_PIPE_STATIC_FRICTION_TORQUE, position_error);
+    }
+
+    if ((current_angle <= App_Config::WATER_PIPE_ANGLE_MIN && torque < 0.0f) ||
+        (current_angle >= App_Config::WATER_PIPE_ANGLE_MAX && torque > 0.0f))
+    {
+        torque = 0.0f;
+    }
+
+    return fminf(fmaxf(torque, -App_Config::WATER_PIPE_TORQUE_MAX),
+                 App_Config::WATER_PIPE_TORQUE_MAX);
+}
+
+void WaterPipeSetTorqueControl()
+{
+    // Disable the motor's internal position loop and send external-loop torque.
+    water_pipe_motor.Set_Control_Angle(0.0f);
+    water_pipe_motor.Set_Control_Omega(0.0f);
+    water_pipe_motor.Set_Control_Torque(WaterPipeControlTorque());
+    water_pipe_motor.Set_K_P(0.0f);
+    water_pipe_motor.Set_K_D(0.0f);
 }
 
 void WaterPipeTaskStart()
 {
-    water_pipe_motor.Set_Control_Angle(WaterPipeTargetAngle());
-    water_pipe_motor.Set_Control_Omega(App_Config::WATER_PIPE_OMEGA_MAX);
+    WaterPipeTargetAngle();
+    WaterPipeSetTorqueControl();
     water_pipe_motor.CAN_Send_Enter();
 }
 
@@ -222,8 +268,7 @@ void WaterPipeTaskProcess1ms()
         return;
     }
 
-    water_pipe_motor.Set_Control_Angle(WaterPipeTargetAngle());
-    water_pipe_motor.Set_Control_Omega(App_Config::WATER_PIPE_OMEGA_MAX);
+    WaterPipeSetTorqueControl();
     water_pipe_motor.TIM_Send_PeriodElapsedCallback();
 }
 
@@ -234,8 +279,9 @@ void BMI088_SPI_Callback(uint8_t *, uint8_t *, uint16_t, uint16_t)
 
 void Vision_USB_ReceiveCallback(uint8_t *buffer, uint16_t length)
 {
-    static uint8_t frame[sizeof(VisionToGimbal)] = {};
+    static uint8_t frame[sizeof(VisionToGimbalPacket)] = {};
     static uint8_t frame_index = 0;
+    static float previous_distance = 0.0f;
 
     for (uint16_t i = 0; i < length; ++i)
     {
@@ -260,17 +306,44 @@ void Vision_USB_ReceiveCallback(uint8_t *buffer, uint16_t length)
         }
 
         frame[frame_index++] = byte;
-        if (frame_index == sizeof(VisionToGimbal))
+        if (frame_index == sizeof(VisionToGimbalPacket))
         {
-            VisionToGimbal packet;
+            VisionToGimbalPacket packet;
             memcpy(&packet, frame, sizeof(packet));
             if (packet.head[0] == 'S' && packet.head[1] == 'P')
             {
                 // CRC is intentionally ignored; the packet header is the only validation.
                 vision_to_gimbal.head[0] = packet.head[0];
                 vision_to_gimbal.head[1] = packet.head[1];
+                // The host sign convention is positive away from the right-hand pivot.
                 vision_to_gimbal.distance = packet.distance;
                 vision_to_gimbal.crc16 = packet.crc16;
+                const uint64_t now = SYS_Timestamp.Get_Current_Timestamp();
+                if (vision_to_gimbal.rx_count != 0u)
+                {
+                    const uint64_t period_us = now - vision_to_gimbal.last_rx_timestamp_us;
+                    vision_to_gimbal.rx_period_us = static_cast<uint32_t>(period_us);
+                    if (period_us >= 1000u && period_us <= 200000u)
+                    {
+                        const float period_s = static_cast<float>(period_us) * 1.0e-6f;
+                        const float velocity = (vision_to_gimbal.distance - previous_distance) / period_s;
+                        vision_to_gimbal.distance_velocity = fminf(
+                            fmaxf(velocity, -App_Config::WATER_PIPE_BALL_VELOCITY_MAX),
+                            App_Config::WATER_PIPE_BALL_VELOCITY_MAX);
+                    }
+                    else
+                    {
+                        vision_to_gimbal.distance_velocity = 0.0f;
+                    }
+                }
+                else
+                {
+                    vision_to_gimbal.distance_velocity = 0.0f;
+                }
+                previous_distance = vision_to_gimbal.distance;
+                vision_to_gimbal.last_rx_timestamp_us = now;
+                ++vision_to_gimbal.rx_count;
+                WaterPipeTargetAngle();
             }
             frame_index = 0u;
         }
@@ -407,11 +480,14 @@ void MenuHandleKey1ms()
 void LineFollowerDisplay()
 {
     const uint32_t now = HAL_GetTick();
+    const uint8_t selected = menu_selected;
+    const uint8_t active_test = menu_active_test;
+    const bool running = menu_running;
     static bool display_initialized = false;
     static bool display_was_running = false;
     static uint8_t drawn_menu_selected = 0;
     const bool first_display = !display_initialized;
-    const bool mode_changed = display_was_running != menu_running;
+    const bool mode_changed = display_was_running != running;
     const bool redraw_menu = first_display || menu_dirty || mode_changed;
     const bool full_redraw = first_display || mode_changed || menu_full_redraw;
     if (!redraw_menu && now - line_display_tick < App_Config::LCD_REFRESH_PERIOD_MS)
@@ -423,24 +499,24 @@ void LineFollowerDisplay()
     display_initialized = true;
 
     uint64_t elapsed = 0;
-    if (menu_running && menu_active_test == 2u &&
+    if (running && active_test == 2u &&
         (line_state == LineRunState::LeavingStart || line_state == LineRunState::Running))
     {
         elapsed = SYS_Timestamp.Get_Current_Timestamp() - line_start_time;
     }
-    else if (menu_running && menu_active_test == 2u && line_state == LineRunState::Finished)
+    else if (running && active_test == 2u && line_state == LineRunState::Finished)
     {
         elapsed = line_finish_time - line_start_time;
     }
-    else if (menu_running)
+    else if (running)
     {
         elapsed = SYS_Timestamp.Get_Current_Timestamp() - menu_start_time;
     }
 
     char timer_text[32];
-    const char *state = !menu_running ? "READY" :
-                        (menu_active_test == 2u && line_state == LineRunState::Finished) ? "DONE" : "RUN";
-    std::snprintf(timer_text, sizeof(timer_text), "T%d %-5s %02lu.%03lus", menu_running ? menu_active_test : 0,
+    const char *state = !running ? "READY" :
+                        (active_test == 2u && line_state == LineRunState::Finished) ? "DONE" : "RUN";
+    std::snprintf(timer_text, sizeof(timer_text), "T%d %-5s %02lu.%03lus", running ? active_test : 0,
                   state,
                   static_cast<unsigned long>(elapsed / 1000000ULL),
                   static_cast<unsigned long>((elapsed / 1000ULL) % 1000ULL));
@@ -449,20 +525,20 @@ void LineFollowerDisplay()
     // header first, which produces a visible black flash on the LCD.
     BSP_LCD.Draw_String(8, 4, timer_text, BSP_LCD_COLOR_GREEN, BSP_LCD_COLOR_BLACK, 2);
 
-    auto draw_menu_item = [](const uint8_t index)
+    auto draw_menu_item = [selected](const uint8_t index)
     {
         const uint16_t y = static_cast<uint16_t>(42u + index * 35u);
-        const bool selected = index == menu_selected;
+        const bool is_selected = index == selected;
         BSP_LCD.Fill_Rectangle(0, y - 2u, 240, 30,
-                               selected ? BSP_LCD_COLOR_BLUE : BSP_LCD_COLOR_BLACK);
+                               is_selected ? BSP_LCD_COLOR_BLUE : BSP_LCD_COLOR_BLACK);
         char item_text[16];
         std::snprintf(item_text, sizeof(item_text), "Test %u", static_cast<unsigned>(index + 2u));
         BSP_LCD.Draw_String(14, y + 4u, item_text,
-                            selected ? BSP_LCD_COLOR_WHITE : BSP_LCD_COLOR_GREEN,
-                            selected ? BSP_LCD_COLOR_BLUE : BSP_LCD_COLOR_BLACK, 2);
+                            is_selected ? BSP_LCD_COLOR_WHITE : BSP_LCD_COLOR_GREEN,
+                            is_selected ? BSP_LCD_COLOR_BLUE : BSP_LCD_COLOR_BLACK, 2);
     };
 
-    if (!menu_running && redraw_menu)
+    if (!running && redraw_menu)
     {
         if (full_redraw)
         {
@@ -472,18 +548,18 @@ void LineFollowerDisplay()
                 draw_menu_item(i);
             }
         }
-        else if (drawn_menu_selected != menu_selected)
+        else if (drawn_menu_selected != selected)
         {
             draw_menu_item(drawn_menu_selected);
-            draw_menu_item(menu_selected);
+            draw_menu_item(selected);
         }
-        drawn_menu_selected = menu_selected;
+        drawn_menu_selected = selected;
     }
-    else if (menu_running && redraw_menu)
+    else if (running && redraw_menu)
     {
         BSP_LCD.Fill_Rectangle(0, 38, 240, 202, BSP_LCD_COLOR_BLACK);
         char item_text[24];
-        std::snprintf(item_text, sizeof(item_text), "Test %u running", static_cast<unsigned>(menu_active_test));
+        std::snprintf(item_text, sizeof(item_text), "Test %u running", static_cast<unsigned>(active_test));
         BSP_LCD.Draw_String(14, 85, item_text, BSP_LCD_COLOR_YELLOW, BSP_LCD_COLOR_BLACK, 2);
         BSP_LCD.Draw_String(14, 125, "LEFT: menu", BSP_LCD_COLOR_GRAY, BSP_LCD_COLOR_BLACK, 2);
     }
@@ -491,7 +567,7 @@ void LineFollowerDisplay()
     {
         menu_full_redraw = false;
     }
-    display_was_running = menu_running;
+    display_was_running = running;
 }
 }
 
@@ -535,14 +611,6 @@ void Task3600s_Callback()
 }
 
 /**
- * @brief 每1s调用一次
- *
- */
-void Task1s_Callback()
-{   
-}
-
-/**
  * @brief 每1ms调用一次
  *
  */
@@ -558,6 +626,7 @@ void Task1ms_Callback()
     motor_right_rear.TIM_Calculate_PeriodElapsedCallback();
     LineFollowerProcess1ms();
     WaterPipeTaskProcess1ms();
+    //water_pipe_motor.CAN_Send_Enter();
 }
 
 /**
@@ -587,8 +656,8 @@ void Task_Init()
     SYS_Timestamp.Init(&htim5);
     HAL_TIM_Base_Start_IT(&htim5);
 
-    // Enable the board-controlled 5 V rail; keep both 24 V rails disabled.
-    BSP_Power.Init(false, false, true);
+    // Power both motor rails and the USB/LCD rail before starting the buses.
+    BSP_Power.Init(false, false, false);
     USB_Init(Vision_USB_ReceiveCallback);
     SPI_Init(&hspi2, BMI088_SPI_Callback);
     BSP_BMI088.Init();
@@ -610,14 +679,13 @@ void Task_Init()
     // are connected to CAN1; CAN2 and CAN3 remain available as normal CAN buses.
     CAN_Init(&hfdcan1, Motor_CAN_Callback);
     water_pipe_motor.Init(&hfdcan2, App_Config::WATER_PIPE_CAN_RX_ID, App_Config::WATER_PIPE_CAN_TX_ID,
-                          Motor_DM_Control_Method_NORMAL_ANGLE_OMEGA);
+                          Motor_DM_Control_Method_NORMAL_MIT);
     CAN_Init(&hfdcan2, Motor_CAN_Callback);
     CAN_Init(&hfdcan3, nullptr);
     LineStop();
 
     // 定时器中断初始化
     HAL_TIM_Base_Start_IT(&htim4);
-    HAL_TIM_Base_Start_IT(&htim6);
     HAL_TIM_Base_Start_IT(&htim7);
     HAL_TIM_Base_Start_IT(&htim8);
 
@@ -670,10 +738,6 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
     else if (htim->Instance == TIM5)
     {
         Task3600s_Callback();
-    }
-    else if (htim->Instance == TIM6)
-    {
-        Task1s_Callback();
     }
     else if (htim->Instance == TIM7)
     {

@@ -127,29 +127,29 @@ Enum_BSP_LCD_Key Class_LCD_Key::Decode_Key(const uint16_t &__ADC_Value_12Bit) co
 {
     // The LCD board uses one ADC ladder. Keep these limits in app_config.h
     // so decoding matches the values calibrated on the actual board.
-    if (__ADC_Value_12Bit <= App_Config::LCD_KEY_NONE_MAX)
+    if (__ADC_Value_12Bit <= App_Config::LCD_KEY_CENTER_MAX)
     {
-        return (BSP_LCD_Key_NONE);
-    }
-    else if (__ADC_Value_12Bit <= App_Config::LCD_KEY_DOWN_MAX)
-    {
-        return (BSP_LCD_Key_DOWN);
-    }
-    else if (__ADC_Value_12Bit <= App_Config::LCD_KEY_UP_MAX)
-    {
-        return (BSP_LCD_Key_UP);
-    }
-    else if (__ADC_Value_12Bit <= App_Config::LCD_KEY_RIGHT_MAX)
-    {
-        return (BSP_LCD_Key_RIGHT);
+        return (BSP_LCD_Key_CENTER);
     }
     else if (__ADC_Value_12Bit <= App_Config::LCD_KEY_LEFT_MAX)
     {
         return (BSP_LCD_Key_LEFT);
     }
+    else if (__ADC_Value_12Bit <= App_Config::LCD_KEY_RIGHT_MAX)
+    {
+        return (BSP_LCD_Key_RIGHT);
+    }
+    else if (__ADC_Value_12Bit <= App_Config::LCD_KEY_UP_MAX)
+    {
+        return (BSP_LCD_Key_UP);
+    }
+    else if (__ADC_Value_12Bit <= App_Config::LCD_KEY_DOWN_MAX)
+    {
+        return (BSP_LCD_Key_DOWN);
+    }
     else
     {
-        return (BSP_LCD_Key_CENTER);
+        return (BSP_LCD_Key_NONE);
     }
 }
 
