@@ -98,6 +98,16 @@ enum : uint8_t
     GIMBAL_TO_VISION_STATUS_END = 2u,
 };
 
+bool TaskUsesLineFollower(uint8_t task)
+{
+    return task == 2u || task == 4u || task == 5u || task == 6u;
+}
+
+bool TaskUsesWaterPipe(uint8_t task)
+{
+    return task == 3u || task == 4u || task == 5u || task == 6u;
+}
+
 bool LineSensorBlack(uint8_t index)
 {
     return Line_Sensor_Data[index] == App_Config::LINE_BLACK_STATE;
@@ -307,7 +317,7 @@ void WaterPipeTaskStart()
 
 void WaterPipeTaskProcess1ms()
 {
-    if (!menu_running || menu_active_test != 3u)
+    if (!menu_running || !TaskUsesWaterPipe(menu_active_test))
     {
         return;
     }
@@ -483,11 +493,11 @@ void MenuHandleKey1ms()
         menu_dirty = true;
         menu_full_redraw = true;
 
-        if (menu_active_test == 2u)
+        if (TaskUsesLineFollower(menu_active_test))
         {
             LineFollowerStart();
         }
-        else if (menu_active_test == 3u)
+        if (TaskUsesWaterPipe(menu_active_test))
         {
             WaterPipeTaskStart();
         }
@@ -497,7 +507,7 @@ void MenuHandleKey1ms()
         menu_running = false;
         line_state = LineRunState::Idle;
         LineStop();
-        if (menu_active_test == 3u)
+        if (TaskUsesWaterPipe(menu_active_test))
         {
             water_pipe_motor.CAN_Send_Exit();
         }
@@ -528,12 +538,12 @@ void LineFollowerDisplay()
     display_initialized = true;
 
     uint64_t elapsed = 0;
-    if (running && active_test == 2u &&
+    if (running && TaskUsesLineFollower(active_test) &&
         (line_state == LineRunState::LeavingStart || line_state == LineRunState::Running))
     {
         elapsed = SYS_Timestamp.Get_Current_Timestamp() - line_start_time;
     }
-    else if (running && active_test == 2u && line_state == LineRunState::Finished)
+    else if (running && TaskUsesLineFollower(active_test) && line_state == LineRunState::Finished)
     {
         elapsed = line_finish_time - line_start_time;
     }
@@ -544,7 +554,7 @@ void LineFollowerDisplay()
 
     char timer_text[32];
     const char *state = !running ? "READY" :
-                        (active_test == 2u && line_state == LineRunState::Finished) ? "DONE" : "RUN";
+                        (TaskUsesLineFollower(active_test) && line_state == LineRunState::Finished) ? "DONE" : "RUN";
     std::snprintf(timer_text, sizeof(timer_text), "T%d %-5s %02lu.%03lus", running ? active_test : 0,
                   state,
                   static_cast<unsigned long>(elapsed / 1000000ULL),
@@ -615,7 +625,7 @@ uint8_t GimbalToVisionStatus()
         return GIMBAL_TO_VISION_STATUS_IDLE;
     }
 
-    if (menu_active_test == 2u && line_state == LineRunState::Finished)
+    if (TaskUsesLineFollower(menu_active_test) && line_state == LineRunState::Finished)
     {
         return GIMBAL_TO_VISION_STATUS_END;
     }
