@@ -89,6 +89,14 @@ volatile bool menu_running = false;
 volatile bool menu_dirty = true;
 volatile bool menu_full_redraw = true;
 uint64_t menu_start_time = 0;
+uint32_t gimbal_status_tx_tick = 0;
+
+enum : uint8_t
+{
+    GIMBAL_TO_VISION_STATUS_IDLE = 0u,
+    GIMBAL_TO_VISION_STATUS_RUNNING = 1u,
+    GIMBAL_TO_VISION_STATUS_END = 2u,
+};
 
 bool LineSensorBlack(uint8_t index)
 {
@@ -590,6 +598,43 @@ void LineFollowerDisplay()
     }
     display_was_running = running;
 }
+
+uint8_t GimbalToVisionTask()
+{
+    if (menu_running)
+    {
+        return menu_active_test;
+    }
+    return static_cast<uint8_t>(menu_selected + 2u);
+}
+
+uint8_t GimbalToVisionStatus()
+{
+    if (!menu_running)
+    {
+        return GIMBAL_TO_VISION_STATUS_IDLE;
+    }
+
+    if (menu_active_test == 2u && line_state == LineRunState::Finished)
+    {
+        return GIMBAL_TO_VISION_STATUS_END;
+    }
+
+    return GIMBAL_TO_VISION_STATUS_RUNNING;
+}
+
+void GimbalToVisionTransmit()
+{
+    const uint32_t now = HAL_GetTick();
+    if (now - gimbal_status_tx_tick < App_Config::LCD_REFRESH_PERIOD_MS)
+    {
+        return;
+    }
+    gimbal_status_tx_tick = now;
+
+    GimbalToVision packet = {{'S', 'P'}, GimbalToVisionTask(), GimbalToVisionStatus(), 0u};
+    USB_Transmit_Data(reinterpret_cast<uint8_t *>(&packet), sizeof(packet));
+}
 }
 
 /* Private function declarations ---------------------------------------------*/
@@ -737,6 +782,7 @@ void Task_Init()
 void Task_Loop()
 {
     LineFollowerDisplay();
+    GimbalToVisionTransmit();
 }
 
 /**

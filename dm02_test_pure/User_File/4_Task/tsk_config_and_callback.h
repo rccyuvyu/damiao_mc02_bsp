@@ -29,6 +29,17 @@ typedef struct __attribute__((packed)) VisionToGimbalPacket
     uint16_t crc16;
 } VisionToGimbalPacket;
 
+typedef struct __attribute__((packed)) GimbalToVision
+{
+    uint8_t head[2];
+    // 当前选择或正在运行的 Test 编号。
+    uint8_t task;
+    // 0: 菜单空闲, 1: 任务运行中, 2: 任务完成。
+    uint8_t status;
+    // 预留 CRC16 字段，当前发送端置 0。
+    uint16_t crc16;
+} GimbalToVision;
+
 typedef struct VisionToGimbal
 {
     uint8_t head[2];
