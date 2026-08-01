@@ -30,7 +30,7 @@
 #include "1_Middleware/Driver/WDG/drv_wdg.h"
 #include "1_Middleware/Driver/ADC/drv_adc.h"
 #include "1_Middleware/Driver/SPI/drv_spi.h"
-#include "1_Middleware/Driver/USB/drv_usb.h"
+#include "1_Middleware/Driver/UART/drv_uart.h"
 #include "1_Middleware/System/Timestamp/sys_timestamp.h"
 #include "app_config.h"
 #include <cstdio>
@@ -51,12 +51,12 @@ Class_Motor_DJI_C610 motor_right_front;
 Class_Motor_DJI_C610 motor_left_rear;
 Class_Motor_DJI_C610 motor_right_rear;
 Class_Motor_DM_Normal water_pipe_motor;
-Class_PID water_pipe_ball_position_pid;
-Class_PID water_pipe_ball_speed_pid;
 
 // Latest vision packet from the USB virtual serial port.
 volatile VisionToGimbal vision_to_gimbal = {{'S', 'P'}, 0.0f, 0.0f, 0.0f, 0u, 0u, 0u, 0u};
 volatile float water_pipe_motor_target_angle = 0.0f;
+// The balance target is latched from the ball position when a task starts.
+volatile float water_pipe_ball_target_position = 0.0f;
 
 // Four line sensors, ordered from right to left (index 0 -> 3).
 uint16_t Line_Sensor_Pin[App_Config::LINE_SENSOR_COUNT] = {
@@ -253,17 +253,17 @@ float WaterPipeTargetAngle()
 {
     const float ball_position = vision_to_gimbal.distance;
     const float ball_velocity = vision_to_gimbal.velocity;
+    const float position_error = water_pipe_ball_target_position - ball_position;
 
-    water_pipe_ball_position_pid.Set_Target(App_Config::WATER_PIPE_BALL_TARGET_POSITION);
-    water_pipe_ball_position_pid.Set_Now(ball_position);
-    water_pipe_ball_position_pid.TIM_Calculate_PeriodElapsedCallback();
-    const float target_speed = water_pipe_ball_position_pid.Get_Out();
-
-    water_pipe_ball_speed_pid.Set_Target(target_speed);
-    water_pipe_ball_speed_pid.Set_Now(ball_velocity);
-    water_pipe_ball_speed_pid.TIM_Calculate_PeriodElapsedCallback();
+    // Outer loop: camera position and velocity directly generate the virtual
+    // pipe angle. The upper computer may change the target position by
+    // The target is latched at task start, so the balance point is the
+    // current ball position instead of the visual horizontal zero.
+    const float virtual_pipe_angle_deg =
+        App_Config::WATER_PIPE_OUTER_POSITION_KP * position_error +
+        App_Config::WATER_PIPE_OUTER_VELOCITY_KP * ball_velocity;
     const float target_pipe_angle_deg = fminf(
-        fmaxf(water_pipe_ball_speed_pid.Get_Out(), -App_Config::WATER_PIPE_PIPE_ANGLE_LIMIT_DEG),
+        fmaxf(virtual_pipe_angle_deg, -App_Config::WATER_PIPE_PIPE_ANGLE_LIMIT_DEG),
         App_Config::WATER_PIPE_PIPE_ANGLE_LIMIT_DEG);
 
     const float limited_target = WaterPipeAngleToMotorAngle(target_pipe_angle_deg);
@@ -276,13 +276,20 @@ float WaterPipeControlTorque()
 {
     const float current_angle = water_pipe_motor.Get_Now_Angle();
     const float target_angle = water_pipe_motor_target_angle;
-    const float position_error = target_angle - current_angle;
-    float torque = App_Config::WATER_PIPE_POSITION_KP * position_error
-                 - App_Config::WATER_PIPE_POSITION_KD * water_pipe_motor.Get_Now_Omega();
+    const float angle_error = target_angle - current_angle;
+    const float boundary = App_Config::WATER_PIPE_SMC_BOUNDARY_LAYER;
+    const float normalized_error = angle_error / boundary;
+    const float saturated_error = fminf(fmaxf(normalized_error, -1.0f), 1.0f);
 
-    if (fabsf(position_error) > App_Config::WATER_PIPE_POSITION_DEADBAND)
+    // Inner loop: quasi-sliding-mode control. Inside the boundary layer the
+    // switching term is continuous, so angle measurement noise does not
+    // directly become a full-amplitude torque relay.
+    float torque = App_Config::WATER_PIPE_SMC_LINEAR_GAIN * angle_error +
+                   App_Config::WATER_PIPE_SMC_SWITCHING_GAIN * saturated_error;
+
+    if (fabsf(angle_error) > App_Config::WATER_PIPE_POSITION_DEADBAND)
     {
-        torque += copysignf(App_Config::WATER_PIPE_STATIC_FRICTION_TORQUE, position_error);
+        torque += copysignf(App_Config::WATER_PIPE_STATIC_FRICTION_TORQUE, angle_error);
     }
 
     if ((current_angle <= App_Config::WATER_PIPE_ANGLE_MIN && torque < 0.0f) ||
@@ -307,8 +314,8 @@ void WaterPipeSetTorqueControl()
 
 void WaterPipeTaskStart()
 {
-    water_pipe_ball_position_pid.Set_Integral_Error(0.0f);
-    water_pipe_ball_speed_pid.Set_Integral_Error(0.0f);
+    water_pipe_ball_target_position = vision_to_gimbal.distance +
+                                      App_Config::WATER_PIPE_BALL_TARGET_POSITION;
     vision_to_gimbal.target_angle = WaterPipeHorizontalMotorAngle();
     water_pipe_motor_target_angle = vision_to_gimbal.target_angle;
     WaterPipeSetTorqueControl();
@@ -332,7 +339,7 @@ void BMI088_SPI_Callback(uint8_t *, uint8_t *, uint16_t, uint16_t)
     BSP_BMI088.SPI_RxCpltCallback();
 }
 
-void Vision_USB_ReceiveCallback(uint8_t *buffer, uint16_t length)
+void Vision_UART_ReceiveCallback(uint8_t *buffer, uint16_t length)
 {
     static uint8_t frame[sizeof(VisionToGimbalPacket)] = {};
     static uint8_t frame_index = 0;
@@ -642,8 +649,9 @@ void GimbalToVisionTransmit()
     }
     gimbal_status_tx_tick = now;
 
-    GimbalToVision packet = {{'S', 'P'}, GimbalToVisionTask(), GimbalToVisionStatus(), 0u};
-    USB_Transmit_Data(reinterpret_cast<uint8_t *>(&packet), sizeof(packet));
+    static GimbalToVision packet;
+    packet = {{'S', 'P'}, GimbalToVisionTask(), GimbalToVisionStatus(), 0u};
+    UART_Transmit_Data(&huart1, reinterpret_cast<uint8_t *>(&packet), sizeof(packet));
 }
 }
 
@@ -734,7 +742,9 @@ void Task_Init()
 
     // Power both motor rails and the USB/LCD rail before starting the buses.
     BSP_Power.Init(false, false, false);
-    USB_Init(Vision_USB_ReceiveCallback);
+    // USART1: PA9 = TX, PA10 = RX. The UART driver uses DMA + idle-line
+    // reception and forwards each received chunk to the vision parser.
+    UART_Init(&huart1, Vision_UART_ReceiveCallback);
     SPI_Init(&hspi2, BMI088_SPI_Callback);
     BSP_BMI088.Init();
     LCD_Demo_Init();
@@ -747,22 +757,6 @@ void Task_Init()
     motor_right_front.Init(&hfdcan1, App_Config::MOTOR_RIGHT_FRONT_ID, Motor_DJI_Control_Method_OMEGA, App_Config::MOTOR_GEARBOX_RATE);
     motor_left_rear.Init(&hfdcan1, App_Config::MOTOR_LEFT_REAR_ID, Motor_DJI_Control_Method_OMEGA, App_Config::MOTOR_GEARBOX_RATE);
     motor_right_rear.Init(&hfdcan1, App_Config::MOTOR_RIGHT_REAR_ID, Motor_DJI_Control_Method_OMEGA, App_Config::MOTOR_GEARBOX_RATE);
-    water_pipe_ball_position_pid.Init(
-        App_Config::WATER_PIPE_BALL_POSITION_KP,
-        App_Config::WATER_PIPE_BALL_POSITION_KI,
-        App_Config::WATER_PIPE_BALL_POSITION_KD,
-        0.0f,
-        0.0f,
-        App_Config::WATER_PIPE_BALL_TARGET_SPEED_MAX,
-        0.001f);
-    water_pipe_ball_speed_pid.Init(
-        App_Config::WATER_PIPE_BALL_SPEED_KP,
-        App_Config::WATER_PIPE_BALL_SPEED_KI,
-        App_Config::WATER_PIPE_BALL_SPEED_KD,
-        0.0f,
-        0.0f,
-        App_Config::WATER_PIPE_PIPE_ANGLE_LIMIT_DEG,
-        0.001f);
     motor_left_front.PID_Omega.Init(App_Config::MOTOR_SPEED_KP, App_Config::MOTOR_SPEED_KI, App_Config::MOTOR_SPEED_KD, App_Config::MOTOR_SPEED_KF, App_Config::MOTOR_SPEED_I_OUT_MAX, App_Config::MOTOR_SPEED_OUT_MAX, App_Config::MOTOR_SPEED_D_T);
     motor_right_front.PID_Omega.Init(App_Config::MOTOR_SPEED_KP, App_Config::MOTOR_SPEED_KI, App_Config::MOTOR_SPEED_KD, App_Config::MOTOR_SPEED_KF, App_Config::MOTOR_SPEED_I_OUT_MAX, App_Config::MOTOR_SPEED_OUT_MAX, App_Config::MOTOR_SPEED_D_T);
     motor_left_rear.PID_Omega.Init(App_Config::MOTOR_SPEED_KP, App_Config::MOTOR_SPEED_KI, App_Config::MOTOR_SPEED_KD, App_Config::MOTOR_SPEED_KF, App_Config::MOTOR_SPEED_I_OUT_MAX, App_Config::MOTOR_SPEED_OUT_MAX, App_Config::MOTOR_SPEED_D_T);

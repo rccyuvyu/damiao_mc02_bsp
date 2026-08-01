@@ -60,6 +60,8 @@ typedef struct VisionToGimbal
 
 extern volatile VisionToGimbal vision_to_gimbal;
 extern volatile float water_pipe_motor_target_angle;
+// 任务开始时锁存的钢球平衡位置，单位与视觉 distance 一致。
+extern volatile float water_pipe_ball_target_position;
 
 /* Exported function declarations --------------------------------------------*/
 

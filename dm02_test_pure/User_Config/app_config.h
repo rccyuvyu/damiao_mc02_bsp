@@ -59,7 +59,7 @@ constexpr float LINE_KP = 2.0f;
 // 循迹横向误差 D；抑制快速偏差变化。
 constexpr float LINE_KD = 0.8f;
 // 四路传感器权重，从右到左排列；正值表示线偏右，负值表示线偏左。
-constexpr float LINE_WEIGHT[4] = {2.5f, 1.0f, -1.0f, -2.5f};
+constexpr float LINE_WEIGHT[4] = {1.5f, 1.0f, -1.0f, -1.5f};
 // 认为是大偏差/急弯的误差阈值。
 constexpr float LINE_SHARP_ERROR = 1.2f;
 // 急弯或标记线处基础速度缩放系数。
@@ -92,29 +92,21 @@ constexpr float WATER_PIPE_PIPE_ANGLE_AT_MIN_DEG = 3.15f;
 // 当电机位于 WATER_PIPE_ANGLE_MAX 时，对应的水管物理倾角，单位 deg。
 constexpr float WATER_PIPE_PIPE_ANGLE_AT_MAX_DEG = -3.23f;
 
-// 电机外部角度环 P；输入为电机目标角 - 当前角，输出为 MIT 力矩。
-constexpr float WATER_PIPE_POSITION_KP = 2.0f;
-// 电机外部角度环 D；对电机当前角速度做阻尼，越大越不容易冲过。
-constexpr float WATER_PIPE_POSITION_KD = 0.3f;
+// 准滑模内环线性增益，单位 Nm/rad；只使用目标角与当前角的误差。
+constexpr float WATER_PIPE_SMC_LINEAR_GAIN = 2.0f;
+// 准滑模内环切换增益，单位 Nm；越大越能克服摩擦和外部扰动。
+constexpr float WATER_PIPE_SMC_SWITCHING_GAIN = 0.35f;
+// 准滑模边界层厚度，单位 rad；0.5 deg 可降低角度测量噪声引起的抖振。
+constexpr float WATER_PIPE_SMC_BOUNDARY_LAYER = 0.0872665f;
 // 发给达妙电机的最大力矩，单位 Nm。
 constexpr float WATER_PIPE_TORQUE_MAX = 2.0f;
-// 小球目标位置，单位和视觉 distance 一致；0 表示视觉坐标中心。
+// 启动位置基准的偏移量，单位和视觉 distance 一致；0 表示锁存任务开始时的当前位置。
 constexpr float WATER_PIPE_BALL_TARGET_POSITION = 0.0f;
-// 小球位置环 P；位置误差越大，输出的目标小球速度越大。
-constexpr float WATER_PIPE_BALL_POSITION_KP = -0.9f;
-// 小球位置环 I；用于消除长期偏置，当前关闭。
-constexpr float WATER_PIPE_BALL_POSITION_KI = 0.0f;
-// 小球位置环 D；用于抑制位置误差快速变化，当前关闭。
-constexpr float WATER_PIPE_BALL_POSITION_KD = 0.0f;
-// 位置环输出限幅，也就是目标小球速度最大值，单位和视觉 velocity 一致。
-constexpr float WATER_PIPE_BALL_TARGET_SPEED_MAX = 1.0f;
-// 小球速度环 P；速度误差越大，输出的目标水管倾角越大。
-constexpr float WATER_PIPE_BALL_SPEED_KP = 0.3f;
-// 小球速度环 I；用于补偿摩擦或安装偏置，当前关闭。
-constexpr float WATER_PIPE_BALL_SPEED_KI = 0.1f;
-// 小球速度环 D；用于抑制速度误差变化，当前关闭。
-constexpr float WATER_PIPE_BALL_SPEED_KD = 0.1f;
-// 速度环输出限幅，也就是水管允许的最大目标倾角，单位 deg。
+// 外环位置增益，输入为 target_position - distance，输出为虚拟水管角度 deg。
+constexpr float WATER_PIPE_OUTER_POSITION_KP = -0.9f;
+// 外环速度阻尼增益，输入为视觉 velocity，输出为虚拟水管角度 deg。
+constexpr float WATER_PIPE_OUTER_VELOCITY_KP = -0.03f;
+// 外环输出限幅，也就是水管允许的最大虚拟目标倾角，单位 deg。
 constexpr float WATER_PIPE_PIPE_ANGLE_LIMIT_DEG = 3.0f;
 // 上位机速度输入限幅，防止异常视觉速度把速度环打满。
 constexpr float WATER_PIPE_BALL_VELOCITY_MAX = 3000.0f;
@@ -123,7 +115,7 @@ constexpr float WATER_PIPE_BALL_MASS_KG = 0.004f;
 // 电机外部角度环死区，单位 rad；小于该误差时不加静摩擦补偿。
 constexpr float WATER_PIPE_POSITION_DEADBAND = 0.005f;
 // 静摩擦补偿力矩，单位 Nm；误差超过死区后按误差方向叠加。
-constexpr float WATER_PIPE_STATIC_FRICTION_TORQUE = 0.3f;
+constexpr float WATER_PIPE_STATIC_FRICTION_TORQUE = 0.0f;
 
 // LCD key thresholds, set midway between the measured key voltages.
 // LCD 五向按键 ADC 阈值，按键识别使用从小到大的区间判断。
