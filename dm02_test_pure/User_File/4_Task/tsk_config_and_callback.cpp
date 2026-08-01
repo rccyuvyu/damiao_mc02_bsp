@@ -67,6 +67,9 @@ GPIO_TypeDef *Line_Sensor_Port[App_Config::LINE_SENSOR_COUNT] = {
     LINE_SENSOR_3_GPIO_Port};
 GPIO_PinState Line_Sensor_Data[App_Config::LINE_SENSOR_COUNT] = {
     GPIO_PIN_SET, GPIO_PIN_SET, GPIO_PIN_SET, GPIO_PIN_SET};
+GPIO_PinState Line_Sensor_Raw_Data[App_Config::LINE_SENSOR_COUNT] = {
+    GPIO_PIN_SET, GPIO_PIN_SET, GPIO_PIN_SET, GPIO_PIN_SET};
+uint8_t line_sensor_hold_count[App_Config::LINE_SENSOR_COUNT] = {};
 
 namespace
 {
@@ -117,7 +120,24 @@ void LineSensorRead()
 {
     for (uint8_t i = 0; i < App_Config::LINE_SENSOR_COUNT; ++i)
     {
-        Line_Sensor_Data[i] = HAL_GPIO_ReadPin(Line_Sensor_Port[i], Line_Sensor_Pin[i]);
+        Line_Sensor_Raw_Data[i] = HAL_GPIO_ReadPin(Line_Sensor_Port[i], Line_Sensor_Pin[i]);
+
+        if (Line_Sensor_Raw_Data[i] == App_Config::LINE_BLACK_STATE)
+        {
+            Line_Sensor_Data[i] = App_Config::LINE_BLACK_STATE;
+            line_sensor_hold_count[i] = 0u;
+        }
+        else if (Line_Sensor_Data[i] == App_Config::LINE_BLACK_STATE &&
+                 line_sensor_hold_count[i] < App_Config::LINE_SENSOR_HOLD_MS)
+        {
+            // Keep a recently valid black sample through a short noisy gap.
+            ++line_sensor_hold_count[i];
+        }
+        else
+        {
+            Line_Sensor_Data[i] = Line_Sensor_Raw_Data[i];
+            line_sensor_hold_count[i] = 0u;
+        }
     }
 }
 
@@ -127,6 +147,16 @@ uint8_t LineBlackCount()
     for (uint8_t i = 0; i < App_Config::LINE_SENSOR_COUNT; ++i)
     {
         count += LineSensorBlack(i) ? 1u : 0u;
+    }
+    return count;
+}
+
+uint8_t LineRawBlackCount()
+{
+    uint8_t count = 0;
+    for (uint8_t i = 0; i < App_Config::LINE_SENSOR_COUNT; ++i)
+    {
+        count += Line_Sensor_Raw_Data[i] == App_Config::LINE_BLACK_STATE ? 1u : 0u;
     }
     return count;
 }
@@ -427,8 +457,10 @@ void LineFollowerProcess1ms()
         return;
     }
 
-    // The 5-sensor bar sees three sensors on the perpendicular start line.
+    // A wide marker slows the chassis; endpoint completion requires all four
+    // line sensors to be on the black line at the same time.
     const bool marker = black_count >= App_Config::LINE_MARKER_MIN_BLACK_COUNT;
+    const bool finish_marker = LineRawBlackCount() == App_Config::LINE_SENSOR_COUNT;
     const float error = LineError();
     const float correction = App_Config::LINE_KP * error + App_Config::LINE_KD * (error - line_previous_error);
     line_previous_error = error;
@@ -458,7 +490,7 @@ void LineFollowerProcess1ms()
     }
     else if (line_state == LineRunState::Running)
     {
-        if (marker && (SYS_Timestamp.Get_Current_Timestamp() - line_start_time) > App_Config::LINE_MIN_RUN_TIME_US)
+        if (finish_marker && (SYS_Timestamp.Get_Current_Timestamp() - line_start_time) > App_Config::LINE_MIN_RUN_TIME_US)
         {
             if (++line_marker_stable >= App_Config::LINE_MARKER_STABLE_MS)
             {

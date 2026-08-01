@@ -52,14 +52,16 @@ constexpr float MOTOR_RIGHT_REAR_SIGN = -1.0f;
 constexpr uint8_t LINE_SENSOR_COUNT = 4u;
 // 黑线对应的 GPIO 电平；当前为低电平表示检测到黑线。
 constexpr GPIO_PinState LINE_BLACK_STATE = GPIO_PIN_RESET;
+// 单路传感器短暂丢线时保持黑线状态的时间，单位 ms；用于抑制接触抖动。
+constexpr uint8_t LINE_SENSOR_HOLD_MS = 500u;
 // 循迹基础速度，单位使用电机速度环的目标单位。
-constexpr float LINE_BASE_SPEED = 5.0f;
+constexpr float LINE_BASE_SPEED = 7.0f;
 // 循迹横向误差 P；越大转向越积极。
 constexpr float LINE_KP = 2.0f;
 // 循迹横向误差 D；抑制快速偏差变化。
-constexpr float LINE_KD = 0.8f;
+constexpr float LINE_KD = 1.8f;
 // 四路传感器权重，从右到左排列；正值表示线偏右，负值表示线偏左。
-constexpr float LINE_WEIGHT[4] = {1.5f, 1.0f, -1.0f, -1.5f};
+constexpr float LINE_WEIGHT[4] = {1.5f, 0.2f, -0.2f, -1.5f};
 // 认为是大偏差/急弯的误差阈值。
 constexpr float LINE_SHARP_ERROR = 1.2f;
 // 急弯或标记线处基础速度缩放系数。
