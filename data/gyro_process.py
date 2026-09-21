@@ -17,6 +17,6 @@ if __name__ == "__main__":
     file_path = './gyro_calib.csv'  # 替换为你的csv文件路径
     means, stds = compute_mean_std(file_path)
 
-    # 打印输出并保留八位小数
-    print(f"Means:{means.round(8).to_dict()}")
-    print(f"Stds:{stds.round(8).to_dict()}")
+    # 打印每列数据的均值方差, 并保留15位小数
+    for column in means.index:
+        print(f"{column}: mean = {means[column]:.15f}, std = {stds[column]:.15f}")
